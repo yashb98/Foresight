@@ -107,10 +107,20 @@ export function Login() {
             </form>
 
             {/* Dev hint */}
-            <div className="mt-4 rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
-              <strong>Dev mode:</strong> Use credentials from <code>seed.py</code> output.
-              <br />
-              Client ID: <code>alpha-grid-client</code> / Secret: <code>dev-secret-123</code>
+            <div className="mt-4 rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground space-y-1">
+              <p><strong>Demo credentials (no database needed):</strong></p>
+              <p>
+                <code className="text-primary">tenant1</code>
+                {' / '}
+                <code className="text-primary">password123</code>
+                {' '}— Meridian Power &amp; Water
+              </p>
+              <p>
+                <code className="text-primary">tenant2</code>
+                {' / '}
+                <code className="text-primary">password456</code>
+                {' '}— TransRail Infrastructure
+              </p>
             </div>
           </CardContent>
         </Card>

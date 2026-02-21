@@ -13,7 +13,7 @@ import time
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -48,7 +48,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Pre-load the champion ML model into memory for fast inference
     try:
-        from ml.serving.predictor import Predictor
+        from ml.serving.predictor import ModelPredictor as Predictor
 
         app.state.predictor = Predictor()
         log.info("Champion ML model loaded into app.state.predictor.")
@@ -133,6 +133,13 @@ async def request_timing_middleware(request: Request, call_next) -> Response:
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    # Let FastAPI handle HTTPExceptions normally (401, 403, 404, 422, etc.)
+    if isinstance(exc, HTTPException):
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": exc.detail},
+            headers=getattr(exc, "headers", None) or {},
+        )
     log.exception("Unhandled exception on %s %s", request.method, request.url.path)
     return JSONResponse(
         status_code=500,

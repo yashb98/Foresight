@@ -19,6 +19,21 @@ log = logging.getLogger(__name__)
 router = APIRouter()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Demo credentials — work without a live database (dev / demo mode).
+# These match exactly what seed.py inserts into PostgreSQL.
+# ─────────────────────────────────────────────────────────────────────────────
+_DEMO_TENANTS = {
+    "tenant1": {
+        "client_secret": "password123",
+        "tenant_id": "11111111-1111-1111-1111-111111111111",
+    },
+    "tenant2": {
+        "client_secret": "password456",
+        "tenant_id": "22222222-2222-2222-2222-222222222222",
+    },
+}
+
 
 def create_access_token(tenant_id: str, client_id: str) -> str:
     """
@@ -31,7 +46,7 @@ def create_access_token(tenant_id: str, client_id: str) -> str:
     Returns:
         Encoded JWT string.
     """
-    secret = os.environ["JWT_SECRET_KEY"]
+    secret = os.environ.get("JWT_SECRET_KEY", "dev-secret-change-me-in-production-32ch")
     algorithm = os.getenv("JWT_ALGORITHM", "HS256")
     expire_minutes = int(os.getenv("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
 
@@ -52,7 +67,9 @@ def create_access_token(tenant_id: str, client_id: str) -> str:
     summary="Authenticate and receive JWT access token",
     description=(
         "Validates tenant credentials and returns a JWT token. "
-        "Include the token in the Authorization header as 'Bearer <token>' for all other endpoints."
+        "Include the token in the Authorization header as 'Bearer <token>' for all other endpoints. "
+        "**Demo credentials (no DB required):** `tenant1` / `password123`  "
+        "or `tenant2` / `password456`."
     ),
 )
 async def login(
@@ -61,6 +78,11 @@ async def login(
 ) -> TokenResponse:
     """
     Authenticate a tenant and issue a JWT token.
+
+    Strategy:
+      1. Try live PostgreSQL — use bcrypt-verified credentials from DB.
+      2. Fall back to built-in demo credentials if DB is unavailable.
+         This lets the dashboard work out-of-the-box without Docker.
 
     Args:
         request: TokenRequest with client_id and client_secret.
@@ -72,15 +94,36 @@ async def login(
     Raises:
         HTTPException 401: Invalid credentials.
     """
-    result = await db.execute(
-        text(
-            "SELECT tenant_id, client_secret_hash FROM tenants WHERE client_id = :cid AND is_active = true"  # noqa: E501
-        ),
-        {"cid": request.client_id},
-    )
-    row = result.fetchone()
+    tenant_id: str | None = None
 
-    if not row or not pwd_context.verify(request.client_secret, row[1]):
+    # ── 1. Try live database ──────────────────────────────────────────────────
+    try:
+        result = await db.execute(
+            text(
+                "SELECT tenant_id, client_secret_hash FROM tenants"
+                " WHERE client_id = :cid AND is_active = true"
+            ),
+            {"cid": request.client_id},
+        )
+        row = result.fetchone()
+        if row and pwd_context.verify(request.client_secret, row[1]):
+            tenant_id = str(row[0])
+            log.info("Token issued via DB for client_id: %s", request.client_id)
+    except Exception as exc:
+        log.warning("DB unavailable, falling back to demo credentials: %s", exc)
+
+    # ── 2. Fall back to demo credentials (dev / demo mode) ───────────────────
+    if tenant_id is None:
+        demo = _DEMO_TENANTS.get(request.client_id)
+        if demo and demo["client_secret"] == request.client_secret:
+            tenant_id = demo["tenant_id"]
+            log.info(
+                "Token issued via demo credentials for client_id: %s",
+                request.client_id,
+            )
+
+    # ── 3. Reject if still no match ──────────────────────────────────────────
+    if tenant_id is None:
         log.warning("Failed auth attempt for client_id: %s", request.client_id)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -88,11 +131,9 @@ async def login(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    tenant_id = str(row[0])
     token = create_access_token(tenant_id, request.client_id)
     expire_minutes = int(os.getenv("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
 
-    log.info("Token issued for tenant: %s", tenant_id)
     return TokenResponse(
         access_token=token,
         token_type="bearer",

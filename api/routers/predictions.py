@@ -50,26 +50,34 @@ async def predict(
     """
     verify_tenant_access(request.tenant_id, current_tenant)
 
-    # Verify asset belongs to tenant
-    result = await db.execute(
-        text("""
-            SELECT asset_id, asset_type, criticality, installed_date
-            FROM assets
-            WHERE asset_id = :asset_id AND tenant_id = :tenant_id AND is_active = true
-        """),
-        {"asset_id": request.asset_id, "tenant_id": request.tenant_id},
-    )
-    asset_row = result.fetchone()
-    if not asset_row:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Asset {request.asset_id} not found for tenant {request.tenant_id}",
-        )
-
     # Load features from feature store (or use provided features)
     if request.features:
+        # Features provided inline — skip DB asset lookup (supports no-DB demo mode)
         features = request.features
     else:
+        # Verify asset belongs to tenant before loading features from DB
+        try:
+            result = await db.execute(
+                text("""
+                    SELECT asset_id, asset_type, criticality, installed_date
+                    FROM assets
+                    WHERE asset_id = :asset_id AND tenant_id = :tenant_id AND is_active = true
+                """),
+                {"asset_id": request.asset_id, "tenant_id": request.tenant_id},
+            )
+            asset_row = result.fetchone()
+        except Exception:
+            # No DB available — treat as if features must be provided directly
+            asset_row = None
+
+        if not asset_row:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=(
+                    f"Asset {request.asset_id} not found for tenant {request.tenant_id}. "
+                    "Provide 'features' in the request body for no-DB mode."
+                ),
+            )
         features = await _load_features_for_asset(db, request.asset_id, request.tenant_id)
 
     # Get predictor and run inference
@@ -89,9 +97,16 @@ async def predict(
             detail="ML prediction service temporarily unavailable",
         )
 
-    # Persist prediction to asset_health_scores (upsert)
-    await _persist_prediction(db, result_obj, request.tenant_id)
-    await db.commit()
+    # Persist prediction to asset_health_scores (upsert) — skip gracefully if DB unavailable
+    try:
+        await _persist_prediction(db, result_obj, request.tenant_id)
+        await db.commit()
+    except Exception as db_exc:
+        log.warning("Could not persist prediction to DB (no-DB mode): %s", db_exc)
+        try:
+            await db.rollback()
+        except Exception:
+            pass
 
     return PredictionResponse.from_prediction_result(result_obj)
 

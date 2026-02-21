@@ -1,8 +1,13 @@
 """
 FORESIGHT — ML Prediction Service
 
-Loads the champion model from MLflow registry and returns failure predictions
-for individual assets. Called by the FastAPI /predict endpoint.
+Loads the champion model and returns failure predictions for individual assets.
+Called by the FastAPI /predict endpoint.
+
+Loading priority:
+  1. Local joblib artifact  — ml/models/predictor_7d.joblib  (trained on real data)
+  2. MLflow registry        — Production alias (if MLFLOW_TRACKING_URI is set)
+  3. Heuristic fallback     — rule-based score (no model available)
 
 Design:
   - Model is loaded once at startup and cached in memory
@@ -17,10 +22,15 @@ import logging
 import os
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from threading import Lock
 from typing import Any, Dict, List, Optional
 
 from common.models import PredictionResult
+
+# Path to the locally-trained real-data models (produced by data/etl/04_train.py)
+_ROOT = Path(__file__).resolve().parent.parent.parent
+LOCAL_MODEL_DIR = _ROOT / "ml" / "models"
 
 log = logging.getLogger(__name__)
 
@@ -93,8 +103,56 @@ class ModelPredictor:
             log.warning("Cannot query MLflow production version: %s", exc)
             return None
 
+    def _load_local_model(self) -> bool:
+        """
+        Try to load the locally-trained real-data model from ml/models/.
+
+        Prefers predictor_7d.joblib (most balanced). Falls back to predictor_30d.joblib.
+        Returns True if a model was loaded successfully.
+        """
+        import joblib
+
+        for stem in ("predictor_7d", "predictor_30d"):
+            path = LOCAL_MODEL_DIR / f"{stem}.joblib"
+            if not path.exists():
+                continue
+            try:
+                artifact = joblib.load(path)
+                # artifact is a dict: {model, scaler, feature_cols, target, metrics, ...}
+                model = artifact.get("model") if isinstance(artifact, dict) else artifact
+                version = (
+                    artifact.get("model_version", stem)
+                    if isinstance(artifact, dict) else stem
+                )
+                with self._lock:
+                    self._model = model
+                    self._model_version = version
+                    self._last_check = time.monotonic()
+                log.info(
+                    "Local real-data model loaded: %s  (ROC-AUC=%.4f, AUC-PR=%.4f)",
+                    path.name,
+                    artifact.get("metrics", {}).get("roc_auc", float("nan"))
+                    if isinstance(artifact, dict) else float("nan"),
+                    artifact.get("metrics", {}).get("auc_pr", float("nan"))
+                    if isinstance(artifact, dict) else float("nan"),
+                )
+                return True
+            except Exception as exc:
+                log.warning("Failed to load local model %s: %s", path, exc)
+        return False
+
     def _refresh_model(self) -> None:
-        """Load (or reload) the champion model from MLflow registry."""
+        """Load (or reload) the champion model.
+
+        Priority:
+          1. Local joblib artifact (ml/models/predictor_7d.joblib)
+          2. MLflow Production alias
+        """
+        # ── 1. Try local real-data model first ───────────────────────────────
+        if self._load_local_model():
+            return  # Local model takes priority; done.
+
+        # ── 2. Try MLflow ─────────────────────────────────────────────────────
         try:
             import mlflow
 
@@ -104,7 +162,7 @@ class ModelPredictor:
             if production_version is None:
                 log.warning(
                     "No Production model found in MLflow registry '%s'. "
-                    "Run ml/training/train.py first.",
+                    "Run data/etl/04_train.py first.",
                     self._model_name,
                 )
                 return
@@ -182,8 +240,10 @@ class ModelPredictor:
             return self._heuristic_prediction(asset_id, tenant_id, features)
 
         prob_7d = max(0.0, min(1.0, prob_7d))
-        prob_30d = max(prob_7d, min(1.0, prob_7d * 1.8 + 0.05))
-        health_score = max(0.0, min(100.0, (1.0 - prob_30d) * 100))
+        # 30-day failure probability: 7d probability + 30% of the remaining headroom.
+        # This keeps 30d ≥ 7d while preventing premature saturation to 1.0.
+        prob_30d = max(prob_7d, min(1.0, prob_7d + (1.0 - prob_7d) * 0.3))
+        health_score = max(0.0, min(100.0, (1.0 - prob_7d) * 100))
 
         # SHAP top features
         top_features = self._compute_top_features(model, X, features)
