@@ -1,0 +1,277 @@
+# =============================================================================
+# FORESIGHT — GitHub Actions CI/CD Pipeline
+#
+# Triggers:
+#   pull_request → lint + type-check + unit tests
+#   push to main → build Docker images + deploy to staging + smoke test
+#   release tag  → deploy to production
+# =============================================================================
+
+name: FORESIGHT CI/CD
+
+on:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [main]
+  release:
+    types: [published]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository_owner }}/foresight
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Job 1: Lint & type check (fast gate, no Docker needed)
+  # ---------------------------------------------------------------------------
+  lint:
+    name: Lint & Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install lint dependencies
+        run: |
+          pip install black flake8 mypy isort
+          pip install pydantic pydantic-settings  # for mypy type resolution
+
+      - name: Check formatting with black
+        run: black --check --line-length 100 common/ ingestion/ streaming/ batch/ ml/ api/ tests/
+
+      - name: Lint with flake8
+        run: |
+          flake8 common/ ingestion/ streaming/ batch/ ml/ api/ \
+            --max-line-length 100 \
+            --extend-ignore E203,W503
+
+      - name: Sort imports with isort
+        run: isort --check-only --profile black common/ ingestion/ api/
+
+      - name: Type check with mypy
+        run: |
+          mypy common/ api/ \
+            --ignore-missing-imports \
+            --disallow-untyped-defs \
+            --python-version 3.11
+
+  # ---------------------------------------------------------------------------
+  # Job 2: Unit tests (no Docker)
+  # ---------------------------------------------------------------------------
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run unit tests with coverage
+        env:
+          DATABASE_URL_SYNC: ""  # Not needed for unit tests
+          POSTGRES_PASSWORD: test
+          MONGO_ROOT_PASSWORD: test
+          MINIO_ROOT_PASSWORD: test
+          AWS_ACCESS_KEY_ID: test
+          AWS_SECRET_ACCESS_KEY: test
+          JWT_SECRET_KEY: test_secret_key_minimum_32_characters_x
+          MLFLOW_BACKEND_STORE_URI: sqlite:///mlflow_test.db
+        run: |
+          pytest tests/unit/ \
+            -v \
+            --tb=short \
+            -m "not integration" \
+            --cov=common \
+            --cov=ingestion \
+            --cov=api \
+            --cov-report=xml \
+            --cov-report=term-missing
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          file: ./coverage.xml
+          fail_ci_if_error: false
+
+  # ---------------------------------------------------------------------------
+  # Job 3: Integration tests (with Docker Compose)
+  # ---------------------------------------------------------------------------
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate .env from template
+        run: |
+          cp .env.template .env
+          # Override with CI-safe values
+          sed -i 's/change_me_postgres_password/ci_postgres_pass/g' .env
+          sed -i 's/change_me_mongo_password/ci_mongo_pass/g' .env
+          sed -i 's/change_me_minio_password/ci_minio_pass/g' .env
+          sed -i 's/change_me_fernet_key_must_be_32_bytes_base64_encoded/YlBOY0lSZ3ZadlU2YkNhNzZLeFRBPT0xMjM0NTY3/g' .env
+          sed -i 's/change_me_airflow_webserver_secret/ci_airflow_secret/g' .env
+          sed -i 's/change_me_jwt_secret_min_32_characters_long/ci_jwt_secret_key_that_is_long_enough_/g' .env
+
+      - name: Start core services (postgres, mongodb, minio, kafka)
+        run: |
+          docker compose up -d postgres mongodb minio zookeeper kafka minio-init
+          docker compose ps
+
+      - name: Wait for services to be healthy
+        run: |
+          timeout 120 bash -c '
+            until docker compose ps | grep -E "(postgres|mongodb|minio|kafka)" | grep -v "starting" | grep -c "healthy" | grep -q "4"; do
+              echo "Waiting for services..."
+              sleep 5
+            done
+          '
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Alembic migrations
+        env:
+          DATABASE_URL_SYNC: postgresql://foresight_user:ci_postgres_pass@localhost:5432/foresight
+        run: |
+          alembic -c infrastructure/migrations/alembic.ini upgrade head
+
+      - name: Run seed script
+        env:
+          DATABASE_URL_SYNC: postgresql://foresight_user:ci_postgres_pass@localhost:5432/foresight
+          MONGO_URI: mongodb://root:ci_mongo_pass@localhost:27017/foresight?authSource=admin
+        run: |
+          python seed.py --tenant-count 2 --asset-count 30
+
+      - name: Run integration tests
+        env:
+          DATABASE_URL_SYNC: postgresql://foresight_user:ci_postgres_pass@localhost:5432/foresight
+          MONGO_URI: mongodb://root:ci_mongo_pass@localhost:27017/foresight?authSource=admin
+          AWS_ENDPOINT_URL: http://localhost:9000
+          AWS_ACCESS_KEY_ID: minioadmin
+          AWS_SECRET_ACCESS_KEY: ci_minio_pass
+        run: |
+          pytest tests/unit/test_db.py \
+            -v \
+            --tb=short \
+            -m integration
+
+      - name: Dump logs on failure
+        if: failure()
+        run: docker compose logs --tail=50
+
+      - name: Teardown
+        if: always()
+        run: docker compose down -v
+
+  # ---------------------------------------------------------------------------
+  # Job 4: Build & push Docker images (on merge to main)
+  # ---------------------------------------------------------------------------
+  build-images:
+    name: Build & Push Images
+    runs-on: ubuntu-latest
+    needs: integration-tests
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push FastAPI image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./api
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-api:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-api:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ---------------------------------------------------------------------------
+  # Job 5: Deploy to staging (on merge to main)
+  # ---------------------------------------------------------------------------
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: build-images
+    if: github.ref == 'refs/heads/main'
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure kubectl
+        run: |
+          echo "${{ secrets.KUBECONFIG_STAGING }}" | base64 -d > kubeconfig.yaml
+          export KUBECONFIG=kubeconfig.yaml
+
+      - name: Deploy to staging namespace
+        run: |
+          kubectl apply -f infrastructure/kubernetes/manifests/ -n foresight-staging
+          kubectl rollout status deployment/foresight-api -n foresight-staging --timeout=5m
+
+      - name: Run smoke tests against staging
+        env:
+          STAGING_API_URL: ${{ secrets.STAGING_API_URL }}
+        run: |
+          python tests/smoke_test.py --base-url "$STAGING_API_URL"
+
+  # ---------------------------------------------------------------------------
+  # Job 6: Deploy to production (on release tag)
+  # ---------------------------------------------------------------------------
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: deploy-staging
+    if: github.event_name == 'release'
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure kubectl (production)
+        run: |
+          echo "${{ secrets.KUBECONFIG_PROD }}" | base64 -d > kubeconfig.yaml
+          export KUBECONFIG=kubeconfig.yaml
+
+      - name: Deploy to production namespace
+        run: |
+          kubectl apply -f infrastructure/kubernetes/manifests/ -n foresight-prod
+          kubectl rollout status deployment/foresight-api -n foresight-prod --timeout=10m
+
+      - name: Tag production deployment
+        run: |
+          kubectl annotate deployment/foresight-api \
+            -n foresight-prod \
+            deployment.kubernetes.io/revision="$GITHUB_SHA" \
+            --overwrite

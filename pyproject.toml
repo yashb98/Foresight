@@ -1,0 +1,88 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "foresight"
+version = "0.1.0"
+description = "FORESIGHT — Predictive Asset Maintenance SaaS Platform"
+authors = [{ name = "FORESIGHT Engineering" }]
+requires-python = ">=3.11"
+readme = "README.md"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["common*", "ingestion*", "streaming*", "batch*", "ml*", "api*"]
+
+# =============================================================================
+# Linting & formatting
+# =============================================================================
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.git
+  | \.venv
+  | build
+  | dist
+  | node_modules
+  | __pycache__
+)/
+'''
+
+[tool.flake8]
+max-line-length = 100
+extend-ignore = ["E203", "W503"]
+exclude = [
+    ".git",
+    "__pycache__",
+    ".venv",
+    "build",
+    "dist",
+    "node_modules",
+    "dashboard",
+]
+
+[tool.mypy]
+python_version = "3.11"
+strict = false
+ignore_missing_imports = true
+warn_unused_ignores = true
+warn_return_any = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+exclude = ["dashboard/", "infrastructure/", "docs/"]
+
+# =============================================================================
+# Testing
+# =============================================================================
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "--strict-markers",
+    "--tb=short",
+    "-v",
+]
+markers = [
+    "unit: marks tests as unit tests",
+    "integration: marks tests as integration tests (require Docker)",
+    "slow: marks tests as slow running",
+]
+
+[tool.coverage.run]
+source = ["common", "ingestion", "streaming", "batch", "ml", "api"]
+omit = [
+    "*/tests/*",
+    "*/__init__.py",
+    "*/migrations/*",
+]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
