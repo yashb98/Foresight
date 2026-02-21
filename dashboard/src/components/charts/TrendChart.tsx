@@ -1,6 +1,5 @@
 /**
- * TrendChart — time-series line chart for sensor metrics
- * Uses Recharts with a dark theme.
+ * TrendChart — Recharts line chart wrapper for sensor trends
  */
 
 import {
@@ -8,28 +7,40 @@ import {
   Line,
   XAxis,
   YAxis,
-  CartesianGrid,
   Tooltip,
   ResponsiveContainer,
+  CartesianGrid,
   ReferenceLine,
 } from 'recharts'
-import type { TrendDataPoint } from '@/types'
 import { Skeleton } from '@/components/ui/skeleton'
+import { cn } from '@/lib/utils'
+
+interface DataPoint {
+  date: string
+  avg_value: number
+  max_value?: number
+  min_value?: number
+}
 
 interface TrendChartProps {
-  data: TrendDataPoint[]
+  data: DataPoint[]
   metric: string
   threshold?: number
   isLoading?: boolean
   height?: number
+  className?: string
 }
 
-const METRIC_LABELS: Record<string, string> = {
-  vibration_rms: 'Vibration RMS (m/s²)',
-  bearing_temp_celsius: 'Bearing Temperature (°C)',
-  oil_pressure_bar: 'Oil Pressure (bar)',
-  motor_current_amp: 'Motor Current (A)',
-  rpm: 'RPM',
+const metricLabels: Record<string, string> = {
+  vibration_rms: 'Vibration (mm/s)',
+  bearing_temp_celsius: 'Temperature (°C)',
+  oil_pressure_bar: 'Pressure (bar)',
+  motor_current_amp: 'Current (A)',
+}
+
+function formatDate(dateStr: string): string {
+  const date = new Date(dateStr)
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
 export function TrendChart({
@@ -37,76 +48,104 @@ export function TrendChart({
   metric,
   threshold,
   isLoading = false,
-  height = 280,
+  height = 240,
+  className,
 }: TrendChartProps) {
   if (isLoading) {
-    return <Skeleton className="w-full" style={{ height }} />
+    return <Skeleton className={cn('w-full', className)} style={{ height }} />
   }
 
-  const label = METRIC_LABELS[metric] ?? metric
+  if (data.length === 0) {
+    return (
+      <div
+        className={cn(
+          'flex items-center justify-center rounded-lg border border-border bg-muted/20 text-muted-foreground',
+          className
+        )}
+        style={{ height }}
+      >
+        <p className="text-sm">No data available</p>
+      </div>
+    )
+  }
+
+  const yAxisLabel = metricLabels[metric] || metric
 
   return (
-    <div>
-      <p className="mb-3 text-xs text-muted-foreground uppercase tracking-wider">{label}</p>
-      <ResponsiveContainer width="100%" height={height}>
-        <LineChart data={data} margin={{ top: 5, right: 20, left: -10, bottom: 5 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+    <div className={cn('w-full', className)} style={{ height }}>
+      <ResponsiveContainer width="100%" height="100%">
+        <LineChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.5} />
           <XAxis
             dataKey="date"
-            tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
+            tickFormatter={formatDate}
+            stroke="hsl(var(--muted-foreground))"
+            fontSize={11}
             tickLine={false}
-            axisLine={false}
-            tickFormatter={(v: string) => v.slice(5)} // "MM-DD"
-            interval="preserveStartEnd"
+            axisLine={{ stroke: 'hsl(var(--border))' }}
           />
           <YAxis
-            tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
+            stroke="hsl(var(--muted-foreground))"
+            fontSize={11}
             tickLine={false}
-            axisLine={false}
-            width={45}
+            axisLine={{ stroke: 'hsl(var(--border))' }}
+            label={{
+              value: yAxisLabel,
+              angle: -90,
+              position: 'insideLeft',
+              style: { fill: 'hsl(var(--muted-foreground))', fontSize: 11 },
+            }}
           />
           <Tooltip
             contentStyle={{
-              background: 'hsl(var(--card))',
+              backgroundColor: 'hsl(var(--card))',
               border: '1px solid hsl(var(--border))',
-              borderRadius: 8,
-              fontSize: 12,
+              borderRadius: '6px',
+              fontSize: '12px',
             }}
-            labelStyle={{ color: 'hsl(var(--foreground))', fontWeight: 600 }}
-            itemStyle={{ color: 'hsl(var(--primary))' }}
+            labelStyle={{ color: 'hsl(var(--foreground))' }}
+            itemStyle={{ color: 'hsl(var(--foreground))' }}
+            labelFormatter={(label) => formatDate(label as string)}
           />
           {threshold !== undefined && (
             <ReferenceLine
               y={threshold}
               stroke="hsl(var(--destructive))"
-              strokeDasharray="4 2"
+              strokeDasharray="5 5"
               label={{
                 value: `Threshold: ${threshold}`,
                 fill: 'hsl(var(--destructive))',
                 fontSize: 10,
-                position: 'insideTopRight',
+                position: 'right',
               }}
             />
           )}
           <Line
             type="monotone"
             dataKey="avg_value"
-            name="Avg"
             stroke="hsl(var(--primary))"
             strokeWidth={2}
             dot={false}
-            activeDot={{ r: 4, strokeWidth: 0 }}
+            activeDot={{ r: 4, fill: 'hsl(var(--primary))' }}
           />
-          <Line
-            type="monotone"
-            dataKey="max_value"
-            name="Max"
-            stroke="hsl(var(--destructive))"
-            strokeWidth={1}
-            strokeDasharray="3 2"
-            dot={false}
-            opacity={0.5}
-          />
+          {data[0]?.max_value !== undefined && (
+            <Line
+              type="monotone"
+              dataKey="max_value"
+              stroke="hsl(var(--primary) / 0.3)"
+              strokeWidth={1}
+              dot={false}
+            />
+          )}
+          {data[0]?.min_value !== undefined && (
+            <Line
+              type="monotone"
+              dataKey="min_value"
+              stroke="hsl(var(--primary) / 0.3)"
+              strokeWidth={1}
+              dot={false}
+            />
+          )}
         </LineChart>
       </ResponsiveContainer>
     </div>

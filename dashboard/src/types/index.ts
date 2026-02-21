@@ -5,17 +5,6 @@
  */
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Auth
-// ─────────────────────────────────────────────────────────────────────────────
-
-export interface TokenResponse {
-  access_token: string
-  token_type: 'bearer'
-  expires_in: number
-  tenant_id: string
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Assets
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -183,12 +172,6 @@ export interface CostAvoidanceReport {
 // ─────────────────────────────────────────────────────────────────────────────
 // UI State
 // ─────────────────────────────────────────────────────────────────────────────
-
-export interface AuthState {
-  token: string | null
-  tenantId: string | null
-  isAuthenticated: boolean
-}
 
 export interface FilterState {
   severity?: AlertSeverity

@@ -24,16 +24,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.dependencies import TenantContext, get_current_tenant, get_db, verify_tenant_access
+from api.dependencies import get_db
 from api.models.schemas import AlertRuleCreate, AlertRuleResponse, AlertRuleUpdate
 
 log = logging.getLogger(__name__)
 router = APIRouter()
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# GET /rules/{tenant_id}
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 @router.get(
@@ -51,48 +46,35 @@ async def list_rules(
     asset_type: Optional[str] = None,
     is_active: Optional[bool] = True,
     db: AsyncSession = Depends(get_db),
-    current_tenant: TenantContext = Depends(get_current_tenant),
 ) -> List[AlertRuleResponse]:
-    verify_tenant_access(tenant_id, current_tenant)
+    from infrastructure.db.base import AlertRule
 
-    try:
-        from infrastructure.db.base import AlertRule
+    stmt = select(AlertRule).where(AlertRule.tenant_id == tenant_id)
+    if is_active is not None:
+        stmt = stmt.where(AlertRule.is_active == is_active)
+    if asset_type:
+        stmt = stmt.where(AlertRule.asset_type == asset_type)
+    stmt = stmt.order_by(AlertRule.created_at.desc())
 
-        stmt = select(AlertRule).where(AlertRule.tenant_id == tenant_id)
-        if is_active is not None:
-            stmt = stmt.where(AlertRule.is_active == is_active)
-        if asset_type:
-            stmt = stmt.where(AlertRule.asset_type == asset_type)
-        stmt = stmt.order_by(AlertRule.created_at.desc())
+    result = await db.execute(stmt)
+    rules = result.scalars().all()
 
-        result = await db.execute(stmt)
-        rules = result.scalars().all()
-
-        return [
-            AlertRuleResponse(
-                id=str(r.id),
-                tenant_id=str(r.tenant_id),
-                name=r.name,
-                description=r.description,
-                asset_type=r.asset_type,
-                metric=r.metric,
-                operator=r.operator,
-                threshold=r.threshold,
-                severity=r.severity,
-                is_active=r.is_active,
-                created_at=r.created_at,
-            )
-            for r in rules
-        ]
-    except Exception as exc:
-        log.exception("Error fetching rules for tenant=%s: %s", tenant_id, exc)
-        # Fall back to demo data when DB is unavailable (dev/test mode)
-        return _demo_rules(tenant_id)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# GET /rules/{tenant_id}/{rule_id}
-# ─────────────────────────────────────────────────────────────────────────────
+    return [
+        AlertRuleResponse(
+            id=str(r.id),
+            tenant_id=str(r.tenant_id),
+            name=r.name,
+            description=r.description,
+            asset_type=r.asset_type,
+            metric=r.metric,
+            operator=r.operator,
+            threshold=r.threshold,
+            severity=r.severity,
+            is_active=r.is_active,
+            created_at=r.created_at,
+        )
+        for r in rules
+    ]
 
 
 @router.get(
@@ -104,44 +86,30 @@ async def get_rule(
     tenant_id: str,
     rule_id: str,
     db: AsyncSession = Depends(get_db),
-    current_tenant: TenantContext = Depends(get_current_tenant),
 ) -> AlertRuleResponse:
-    verify_tenant_access(tenant_id, current_tenant)
+    from infrastructure.db.base import AlertRule
 
-    try:
-        from infrastructure.db.base import AlertRule
+    stmt = (
+        select(AlertRule).where(AlertRule.tenant_id == tenant_id).where(AlertRule.id == rule_id)
+    )
+    result = await db.execute(stmt)
+    rule = result.scalar_one_or_none()
+    if not rule:
+        raise HTTPException(status_code=404, detail=f"Rule {rule_id} not found.")
 
-        stmt = (
-            select(AlertRule).where(AlertRule.tenant_id == tenant_id).where(AlertRule.id == rule_id)
-        )
-        result = await db.execute(stmt)
-        rule = result.scalar_one_or_none()
-        if not rule:
-            raise HTTPException(status_code=404, detail=f"Rule {rule_id} not found.")
-
-        return AlertRuleResponse(
-            id=str(rule.id),
-            tenant_id=str(rule.tenant_id),
-            name=rule.name,
-            description=rule.description,
-            asset_type=rule.asset_type,
-            metric=rule.metric,
-            operator=rule.operator,
-            threshold=rule.threshold,
-            severity=rule.severity,
-            is_active=rule.is_active,
-            created_at=rule.created_at,
-        )
-    except HTTPException:
-        raise
-    except Exception as exc:
-        log.exception("Error fetching rule=%s for tenant=%s: %s", rule_id, tenant_id, exc)
-        raise HTTPException(status_code=503, detail="Database temporarily unavailable.")
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# POST /rules/{tenant_id}
-# ─────────────────────────────────────────────────────────────────────────────
+    return AlertRuleResponse(
+        id=str(rule.id),
+        tenant_id=str(rule.tenant_id),
+        name=rule.name,
+        description=rule.description,
+        asset_type=rule.asset_type,
+        metric=rule.metric,
+        operator=rule.operator,
+        threshold=rule.threshold,
+        severity=rule.severity,
+        is_active=rule.is_active,
+        created_at=rule.created_at,
+    )
 
 
 @router.post(
@@ -158,51 +126,39 @@ async def create_rule(
     tenant_id: str,
     payload: AlertRuleCreate,
     db: AsyncSession = Depends(get_db),
-    current_tenant: TenantContext = Depends(get_current_tenant),
 ) -> AlertRuleResponse:
-    verify_tenant_access(tenant_id, current_tenant)
+    from infrastructure.db.base import AlertRule
 
-    try:
-        from infrastructure.db.base import AlertRule
+    rule = AlertRule(
+        id=uuid.uuid4(),
+        tenant_id=tenant_id,
+        name=payload.name,
+        description=payload.description,
+        asset_type=payload.asset_type,
+        metric=payload.metric,
+        operator=payload.operator,
+        threshold=payload.threshold,
+        severity=payload.severity,
+        is_active=True,
+    )
+    db.add(rule)
+    await db.commit()
+    await db.refresh(rule)
+    log.info("Created alert rule id=%s tenant=%s", rule.id, tenant_id)
 
-        rule = AlertRule(
-            id=uuid.uuid4(),
-            tenant_id=tenant_id,
-            name=payload.name,
-            description=payload.description,
-            asset_type=payload.asset_type,
-            metric=payload.metric,
-            operator=payload.operator,
-            threshold=payload.threshold,
-            severity=payload.severity,
-            is_active=True,
-        )
-        db.add(rule)
-        await db.commit()
-        await db.refresh(rule)
-        log.info("Created alert rule id=%s tenant=%s", rule.id, tenant_id)
-
-        return AlertRuleResponse(
-            id=str(rule.id),
-            tenant_id=str(rule.tenant_id),
-            name=rule.name,
-            description=rule.description,
-            asset_type=rule.asset_type,
-            metric=rule.metric,
-            operator=rule.operator,
-            threshold=rule.threshold,
-            severity=rule.severity,
-            is_active=rule.is_active,
-            created_at=rule.created_at,
-        )
-    except Exception as exc:
-        log.exception("Error creating rule for tenant=%s: %s", tenant_id, exc)
-        raise HTTPException(status_code=503, detail="Could not persist rule — database error.")
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# PUT /rules/{tenant_id}/{rule_id}
-# ─────────────────────────────────────────────────────────────────────────────
+    return AlertRuleResponse(
+        id=str(rule.id),
+        tenant_id=str(rule.tenant_id),
+        name=rule.name,
+        description=rule.description,
+        asset_type=rule.asset_type,
+        metric=rule.metric,
+        operator=rule.operator,
+        threshold=rule.threshold,
+        severity=rule.severity,
+        is_active=rule.is_active,
+        created_at=rule.created_at,
+    )
 
 
 @router.put(
@@ -215,54 +171,40 @@ async def update_rule(
     rule_id: str,
     payload: AlertRuleUpdate,
     db: AsyncSession = Depends(get_db),
-    current_tenant: TenantContext = Depends(get_current_tenant),
 ) -> AlertRuleResponse:
-    verify_tenant_access(tenant_id, current_tenant)
+    from infrastructure.db.base import AlertRule
 
-    try:
-        from infrastructure.db.base import AlertRule
+    stmt = (
+        select(AlertRule).where(AlertRule.tenant_id == tenant_id).where(AlertRule.id == rule_id)
+    )
+    result = await db.execute(stmt)
+    rule = result.scalar_one_or_none()
+    if not rule:
+        raise HTTPException(status_code=404, detail=f"Rule {rule_id} not found.")
 
-        stmt = (
-            select(AlertRule).where(AlertRule.tenant_id == tenant_id).where(AlertRule.id == rule_id)
-        )
-        result = await db.execute(stmt)
-        rule = result.scalar_one_or_none()
-        if not rule:
-            raise HTTPException(status_code=404, detail=f"Rule {rule_id} not found.")
+    update_data = payload.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(rule, field, value)
 
-        update_data = payload.model_dump(exclude_unset=True)
-        for field, value in update_data.items():
-            setattr(rule, field, value)
+    await db.commit()
+    await db.refresh(rule)
+    log.info(
+        "Updated alert rule id=%s tenant=%s fields=%s", rule_id, tenant_id, list(update_data)
+    )
 
-        await db.commit()
-        await db.refresh(rule)
-        log.info(
-            "Updated alert rule id=%s tenant=%s fields=%s", rule_id, tenant_id, list(update_data)
-        )
-
-        return AlertRuleResponse(
-            id=str(rule.id),
-            tenant_id=str(rule.tenant_id),
-            name=rule.name,
-            description=rule.description,
-            asset_type=rule.asset_type,
-            metric=rule.metric,
-            operator=rule.operator,
-            threshold=rule.threshold,
-            severity=rule.severity,
-            is_active=rule.is_active,
-            created_at=rule.created_at,
-        )
-    except HTTPException:
-        raise
-    except Exception as exc:
-        log.exception("Error updating rule=%s tenant=%s: %s", rule_id, tenant_id, exc)
-        raise HTTPException(status_code=503, detail="Database temporarily unavailable.")
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# DELETE /rules/{tenant_id}/{rule_id}  (soft delete)
-# ─────────────────────────────────────────────────────────────────────────────
+    return AlertRuleResponse(
+        id=str(rule.id),
+        tenant_id=str(rule.tenant_id),
+        name=rule.name,
+        description=rule.description,
+        asset_type=rule.asset_type,
+        metric=rule.metric,
+        operator=rule.operator,
+        threshold=rule.threshold,
+        severity=rule.severity,
+        is_active=rule.is_active,
+        created_at=rule.created_at,
+    )
 
 
 @router.delete(
@@ -279,77 +221,17 @@ async def delete_rule(
     tenant_id: str,
     rule_id: str,
     db: AsyncSession = Depends(get_db),
-    current_tenant: TenantContext = Depends(get_current_tenant),
 ) -> None:
-    verify_tenant_access(tenant_id, current_tenant)
+    from infrastructure.db.base import AlertRule
 
-    try:
-        from infrastructure.db.base import AlertRule
+    stmt = (
+        select(AlertRule).where(AlertRule.tenant_id == tenant_id).where(AlertRule.id == rule_id)
+    )
+    result = await db.execute(stmt)
+    rule = result.scalar_one_or_none()
+    if not rule:
+        raise HTTPException(status_code=404, detail=f"Rule {rule_id} not found.")
 
-        stmt = (
-            select(AlertRule).where(AlertRule.tenant_id == tenant_id).where(AlertRule.id == rule_id)
-        )
-        result = await db.execute(stmt)
-        rule = result.scalar_one_or_none()
-        if not rule:
-            raise HTTPException(status_code=404, detail=f"Rule {rule_id} not found.")
-
-        rule.is_active = False
-        await db.commit()
-        log.info("Soft-deleted alert rule id=%s tenant=%s", rule_id, tenant_id)
-    except HTTPException:
-        raise
-    except Exception as exc:
-        log.exception("Error deleting rule=%s tenant=%s: %s", rule_id, tenant_id, exc)
-        raise HTTPException(status_code=503, detail="Database temporarily unavailable.")
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Demo data fallback
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-def _demo_rules(tenant_id: str) -> List[AlertRuleResponse]:
-    from datetime import datetime, timezone
-
-    return [
-        AlertRuleResponse(
-            id="rule-001",
-            tenant_id=tenant_id,
-            name="High Vibration — Pump Motors",
-            description="Triggers when pump motor vibration exceeds 8 m/s²",
-            asset_type="pump",
-            metric="vibration_rms",
-            operator="gt",
-            threshold=8.0,
-            severity="high",
-            is_active=True,
-            created_at=datetime(2024, 1, 15, tzinfo=timezone.utc),
-        ),
-        AlertRuleResponse(
-            id="rule-002",
-            tenant_id=tenant_id,
-            name="Bearing Overtemperature",
-            description="Triggers when bearing temperature exceeds 85°C",
-            asset_type="motor",
-            metric="bearing_temp_celsius",
-            operator="gt",
-            threshold=85.0,
-            severity="critical",
-            is_active=True,
-            created_at=datetime(2024, 2, 1, tzinfo=timezone.utc),
-        ),
-        AlertRuleResponse(
-            id="rule-003",
-            tenant_id=tenant_id,
-            name="Low Oil Pressure — Compressors",
-            description="Triggers when oil pressure drops below 2.5 bar",
-            asset_type="compressor",
-            metric="oil_pressure_bar",
-            operator="lt",
-            threshold=2.5,
-            severity="medium",
-            is_active=True,
-            created_at=datetime(2024, 2, 14, tzinfo=timezone.utc),
-        ),
-    ]
+    rule.is_active = False
+    await db.commit()
+    log.info("Soft-deleted alert rule id=%s tenant=%s", rule_id, tenant_id)

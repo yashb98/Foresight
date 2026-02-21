@@ -17,7 +17,7 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from api.routers import alerts, assets, auth, predictions, reports, rules
+from api.routers import alerts, assets, predictions, reports, rules
 
 log = logging.getLogger("foresight.api")
 
@@ -151,7 +151,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 # Routers
 # ─────────────────────────────────────────────────────────────────────────────
 
-app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
+
 app.include_router(assets.router, prefix="/assets", tags=["Assets"])
 app.include_router(alerts.router, prefix="/alerts", tags=["Alerts"])
 app.include_router(predictions.router, prefix="/predict", tags=["Predictions"])

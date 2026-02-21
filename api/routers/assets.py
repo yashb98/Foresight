@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.dependencies import TenantContext, get_current_tenant, get_db, verify_tenant_access
+from api.dependencies import get_db
 from api.models.schemas import (
     AssetDetailResponse,
     AssetListResponse,
@@ -49,27 +49,23 @@ async def list_assets(
     ),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
-    current_tenant: TenantContext = Depends(get_current_tenant),
     db: AsyncSession = Depends(get_db),
 ) -> AssetListResponse:
     """
     Return all active assets for a tenant with their latest health scores.
 
     Args:
-        tenant_id:      Must match authenticated token's tenant_id.
+        tenant_id:      Tenant UUID.
         asset_type:     Optional filter (pump, turbine, etc.)
         criticality:    Optional filter (low, medium, high, critical)
         risk_level:     Optional filter based on failure_prob_30d
         page:           Page number (1-based)
         page_size:      Results per page (max 200)
-        current_tenant: Injected JWT tenant context.
         db:             Database session.
 
     Returns:
         AssetListResponse with list of assets and their current health scores.
     """
-    verify_tenant_access(tenant_id, current_tenant)
-
     from api.feature_store import asset_list
     data = asset_list(
         tenant_id,
@@ -117,27 +113,22 @@ async def list_assets(
 async def get_asset_detail(
     tenant_id: str,
     asset_id: str,
-    current_tenant: TenantContext = Depends(get_current_tenant),
     db: AsyncSession = Depends(get_db),
 ) -> AssetDetailResponse:
     """
     Return full detail for a single asset including 30-day prediction history.
 
     Args:
-        tenant_id:      Tenant UUID (must match token).
+        tenant_id:      Tenant UUID.
         asset_id:       Asset UUID.
-        current_tenant: Injected JWT context.
         db:             Database session.
 
     Returns:
         AssetDetailResponse with full prediction history.
 
     Raises:
-        HTTPException 403: Cross-tenant access attempt.
         HTTPException 404: Asset not found.
     """
-    verify_tenant_access(tenant_id, current_tenant)
-
     # Fetch asset
     asset_result = await db.execute(
         text("""

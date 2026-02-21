@@ -3,7 +3,6 @@
  */
 
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
 import { Search, ChevronRight } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -146,11 +145,9 @@ export function AssetTable() {
                       )}
                     </td>
                     <td className="py-3 px-4">
-                      <Link to={`/assets/${asset.asset_id}`}>
-                        <Button variant="ghost" size="sm" className="h-7">
-                          <ChevronRight className="h-4 w-4" />
-                        </Button>
-                      </Link>
+                      <Button variant="ghost" size="sm" className="h-7">
+                        <ChevronRight className="h-4 w-4" />
+                      </Button>
                     </td>
                   </tr>
                 )

@@ -1,5 +1,5 @@
 /**
- * HealthGauge — circular arc gauge for fleet health score (0–100)
+ * HealthGauge — SVG circular gauge for fleet/asset health scores (0–100)
  */
 
 import { cn } from '@/lib/utils'
@@ -14,60 +14,64 @@ interface HealthGaugeProps {
 
 export function HealthGauge({
   score,
-  size = 120,
-  strokeWidth = 10,
-  label = 'Fleet Health',
+  size = 160,
+  strokeWidth = 12,
+  label,
   className,
 }: HealthGaugeProps) {
   const radius = (size - strokeWidth) / 2
-  const circumference = Math.PI * radius // half-circle arc
-  const progress = (score / 100) * circumference
-  const cx = size / 2
-  const cy = size / 2
+  const circumference = 2 * Math.PI * radius
+  const normalizedScore = Math.min(100, Math.max(0, score))
+  const offset = circumference - (normalizedScore / 100) * circumference
 
-  // Colour stops for the arc
-  const colour =
-    score >= 85 ? '#10b981' :
-    score >= 70 ? '#22c55e' :
-    score >= 50 ? '#eab308' :
-    score >= 30 ? '#f97316' :
-    '#ef4444'
+  // Color based on score
+  const getColor = (score: number) => {
+    if (score >= 85) return 'stroke-emerald-400'
+    if (score >= 70) return 'stroke-green-400'
+    if (score >= 50) return 'stroke-yellow-400'
+    if (score >= 30) return 'stroke-orange-400'
+    return 'stroke-red-400'
+  }
 
   return (
-    <div className={cn('flex flex-col items-center', className)}>
-      <svg width={size} height={size / 2 + strokeWidth} viewBox={`0 0 ${size} ${size / 2 + strokeWidth}`}>
-        {/* Background track */}
-        <path
-          d={`M ${strokeWidth / 2} ${cy} A ${radius} ${radius} 0 0 1 ${size - strokeWidth / 2} ${cy}`}
-          fill="none"
-          stroke="hsl(var(--border))"
-          strokeWidth={strokeWidth}
-          strokeLinecap="round"
-        />
-        {/* Progress arc */}
-        <path
-          d={`M ${strokeWidth / 2} ${cy} A ${radius} ${radius} 0 0 1 ${size - strokeWidth / 2} ${cy}`}
-          fill="none"
-          stroke={colour}
-          strokeWidth={strokeWidth}
-          strokeLinecap="round"
-          strokeDasharray={`${progress} ${circumference}`}
-          style={{ transition: 'stroke-dasharray 0.8s ease-in-out' }}
-        />
-        {/* Score text */}
-        <text
-          x={cx}
-          y={cy - 2}
-          textAnchor="middle"
-          dominantBaseline="middle"
-          fontSize={size * 0.22}
-          fontWeight="700"
-          fill={colour}
+    <div className={cn('relative flex flex-col items-center', className)}>
+      <div className="relative" style={{ width: size, height: size }}>
+        <svg
+          width={size}
+          height={size}
+          viewBox={`0 0 ${size} ${size}`}
+          className="transform -rotate-90"
         >
-          {score.toFixed(0)}
-        </text>
-      </svg>
-      <span className="mt-1 text-xs font-medium text-muted-foreground">{label}</span>
+          {/* Background circle */}
+          <circle
+            cx={size / 2}
+            cy={size / 2}
+            r={radius}
+            fill="none"
+            className="stroke-muted/30"
+            strokeWidth={strokeWidth}
+          />
+          {/* Progress circle */}
+          <circle
+            cx={size / 2}
+            cy={size / 2}
+            r={radius}
+            fill="none"
+            className={cn('transition-all duration-1000 ease-out', getColor(normalizedScore))}
+            strokeWidth={strokeWidth}
+            strokeLinecap="round"
+            strokeDasharray={circumference}
+            strokeDashoffset={offset}
+          />
+        </svg>
+        {/* Center content */}
+        <div className="absolute inset-0 flex flex-col items-center justify-center">
+          <span className={cn('text-4xl font-bold', getColor(normalizedScore).replace('stroke-', 'text-'))}>
+            {normalizedScore.toFixed(1)}
+          </span>
+          {label && <span className="text-xs text-muted-foreground mt-1">{label}</span>}
+        </div>
+      </div>
     </div>
   )
 }

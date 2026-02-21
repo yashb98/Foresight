@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.dependencies import TenantContext, get_current_tenant, get_db, verify_tenant_access
+from api.dependencies import get_db
 from api.models.schemas import PredictionRequest, PredictionResponse
 
 log = logging.getLogger(__name__)
@@ -29,7 +29,6 @@ router = APIRouter()
 )
 async def predict(
     request: PredictionRequest,
-    current_tenant: TenantContext = Depends(get_current_tenant),
     db: AsyncSession = Depends(get_db),
 ) -> PredictionResponse:
     """
@@ -37,46 +36,35 @@ async def predict(
 
     Args:
         request:        PredictionRequest with asset_id and tenant_id.
-        current_tenant: Injected JWT tenant context.
         db:             Database session.
 
     Returns:
         PredictionResponse with failure probabilities and feature explanations.
 
     Raises:
-        HTTPException 403: Cross-tenant access attempt.
         HTTPException 404: Asset not found.
         HTTPException 503: ML model not available.
     """
-    verify_tenant_access(request.tenant_id, current_tenant)
-
     # Load features from feature store (or use provided features)
     if request.features:
-        # Features provided inline — skip DB asset lookup (supports no-DB demo mode)
+        # Features provided inline
         features = request.features
     else:
         # Verify asset belongs to tenant before loading features from DB
-        try:
-            result = await db.execute(
-                text("""
-                    SELECT asset_id, asset_type, criticality, installed_date
-                    FROM assets
-                    WHERE asset_id = :asset_id AND tenant_id = :tenant_id AND is_active = true
-                """),
-                {"asset_id": request.asset_id, "tenant_id": request.tenant_id},
-            )
-            asset_row = result.fetchone()
-        except Exception:
-            # No DB available — treat as if features must be provided directly
-            asset_row = None
+        result = await db.execute(
+            text("""
+                SELECT asset_id, asset_type, criticality, installed_date
+                FROM assets
+                WHERE asset_id = :asset_id AND tenant_id = :tenant_id AND is_active = true
+            """),
+            {"asset_id": request.asset_id, "tenant_id": request.tenant_id},
+        )
+        asset_row = result.fetchone()
 
         if not asset_row:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=(
-                    f"Asset {request.asset_id} not found for tenant {request.tenant_id}. "
-                    "Provide 'features' in the request body for no-DB mode."
-                ),
+                detail=f"Asset {request.asset_id} not found for tenant {request.tenant_id}.",
             )
         features = await _load_features_for_asset(db, request.asset_id, request.tenant_id)
 
@@ -97,12 +85,12 @@ async def predict(
             detail="ML prediction service temporarily unavailable",
         )
 
-    # Persist prediction to asset_health_scores (upsert) — skip gracefully if DB unavailable
+    # Persist prediction to asset_health_scores (upsert)
     try:
         await _persist_prediction(db, result_obj, request.tenant_id)
         await db.commit()
     except Exception as db_exc:
-        log.warning("Could not persist prediction to DB (no-DB mode): %s", db_exc)
+        log.warning("Could not persist prediction to DB: %s", db_exc)
         try:
             await db.rollback()
         except Exception:
@@ -128,7 +116,7 @@ async def _load_features_for_asset(db: AsyncSession, asset_id: str, tenant_id: s
         text("""
             SELECT hs.top_features_json,
                    EXTRACT(EPOCH FROM (NOW() - mr.last_maint)) / 86400 AS days_since_maint,
-                   EXTRACT(EPOCH FROM (NOW() - a.installed_date::timestamp)) / 86400 AS days_since_install  # noqa: E501
+                   EXTRACT(EPOCH FROM (NOW() - a.installed_date::timestamp)) / 86400 AS days_since_install
             FROM assets a
             LEFT JOIN (
                 SELECT asset_id, MAX(performed_at) AS last_maint

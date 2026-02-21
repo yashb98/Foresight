@@ -15,25 +15,15 @@ import type {
   CostAvoidanceReport,
   FleetSummary,
   Prediction,
-  TokenResponse,
   TrendResponse,
 } from '@/types'
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Auth
-// ─────────────────────────────────────────────────────────────────────────────
+// Default tenant ID for single-tenant mode
+const DEFAULT_TENANT_ID = '11111111-1111-1111-1111-111111111111'
 
-export async function login(clientId: string, clientSecret: string): Promise<TokenResponse> {
-  const { data } = await apiClient.post<TokenResponse>('/auth/token', {
-    client_id: clientId,
-    client_secret: clientSecret,
-  })
-  return data
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 // Assets
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 
 export interface AssetFilters {
   status?: string
@@ -44,23 +34,22 @@ export interface AssetFilters {
 }
 
 export async function fetchAssets(
-  tenantId: string,
   filters: AssetFilters = {}
 ): Promise<AssetListResponse> {
-  const { data } = await apiClient.get<AssetListResponse>(`/assets/${tenantId}`, {
+  const { data } = await apiClient.get<AssetListResponse>(`/assets/${DEFAULT_TENANT_ID}`, {
     params: filters,
   })
   return data
 }
 
-export async function fetchAssetDetail(tenantId: string, assetId: string): Promise<AssetDetail> {
-  const { data } = await apiClient.get<AssetDetail>(`/assets/${tenantId}/${assetId}`)
+export async function fetchAssetDetail(assetId: string): Promise<AssetDetail> {
+  const { data } = await apiClient.get<AssetDetail>(`/assets/${DEFAULT_TENANT_ID}/${assetId}`)
   return data
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 // Alerts
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 
 export interface AlertFilters {
   severity?: string
@@ -70,21 +59,19 @@ export interface AlertFilters {
 }
 
 export async function fetchAlerts(
-  tenantId: string,
   filters: AlertFilters = {}
 ): Promise<AlertListResponse> {
-  const { data } = await apiClient.get<AlertListResponse>(`/alerts/${tenantId}`, {
+  const { data } = await apiClient.get<AlertListResponse>(`/alerts/${DEFAULT_TENANT_ID}`, {
     params: filters,
   })
   return data
 }
 
 export async function acknowledgeAlert(
-  tenantId: string,
   alertId: string,
   notes?: string
 ): Promise<Alert> {
-  const { data } = await apiClient.patch<Alert>(`/alerts/${tenantId}/${alertId}`, {
+  const { data } = await apiClient.patch<Alert>(`/alerts/${DEFAULT_TENANT_ID}/${alertId}`, {
     status: 'acknowledged',
     notes,
   })
@@ -92,97 +79,89 @@ export async function acknowledgeAlert(
 }
 
 export async function resolveAlert(
-  tenantId: string,
   alertId: string,
   notes?: string
 ): Promise<Alert> {
-  const { data } = await apiClient.patch<Alert>(`/alerts/${tenantId}/${alertId}`, {
+  const { data } = await apiClient.patch<Alert>(`/alerts/${DEFAULT_TENANT_ID}/${alertId}`, {
     status: 'resolved',
     notes,
   })
   return data
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 // Predictions
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 
 export async function predictAsset(
-  tenantId: string,
   assetId: string,
   features?: Record<string, number>
 ): Promise<Prediction> {
   const { data } = await apiClient.post<Prediction>('/predict', {
-    tenant_id: tenantId,
+    tenant_id: DEFAULT_TENANT_ID,
     asset_id: assetId,
     features,
   })
   return data
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 // Alert Rules
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 
-export async function fetchRules(tenantId: string): Promise<AlertRule[]> {
-  const { data } = await apiClient.get<AlertRule[]>(`/rules/${tenantId}`)
+export async function fetchRules(): Promise<AlertRule[]> {
+  const { data } = await apiClient.get<AlertRule[]>(`/rules/${DEFAULT_TENANT_ID}`)
   return data
 }
 
 export async function createRule(
-  tenantId: string,
   payload: Omit<AlertRule, 'id' | 'tenant_id' | 'is_active' | 'created_at'>
 ): Promise<AlertRule> {
-  const { data } = await apiClient.post<AlertRule>(`/rules/${tenantId}`, payload)
+  const { data } = await apiClient.post<AlertRule>(`/rules/${DEFAULT_TENANT_ID}`, payload)
   return data
 }
 
 export async function updateRule(
-  tenantId: string,
   ruleId: string,
   payload: Partial<AlertRule>
 ): Promise<AlertRule> {
-  const { data } = await apiClient.put<AlertRule>(`/rules/${tenantId}/${ruleId}`, payload)
+  const { data } = await apiClient.put<AlertRule>(`/rules/${DEFAULT_TENANT_ID}/${ruleId}`, payload)
   return data
 }
 
-export async function deleteRule(tenantId: string, ruleId: string): Promise<void> {
-  await apiClient.delete(`/rules/${tenantId}/${ruleId}`)
+export async function deleteRule(ruleId: string): Promise<void> {
+  await apiClient.delete(`/rules/${DEFAULT_TENANT_ID}/${ruleId}`)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 // Reports
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 
-export async function fetchFleetSummary(tenantId: string): Promise<FleetSummary> {
-  const { data } = await apiClient.get<FleetSummary>(`/reports/${tenantId}/summary`)
+export async function fetchFleetSummary(): Promise<FleetSummary> {
+  const { data } = await apiClient.get<FleetSummary>(`/reports/${DEFAULT_TENANT_ID}/summary`)
   return data
 }
 
 export async function fetchTrends(
-  tenantId: string,
   metric: string,
   days: number,
   assetId?: string
 ): Promise<TrendResponse> {
-  const { data } = await apiClient.get<TrendResponse>(`/reports/${tenantId}/trends`, {
+  const { data } = await apiClient.get<TrendResponse>(`/reports/${DEFAULT_TENANT_ID}/trends`, {
     params: { metric, days, ...(assetId && { asset_id: assetId }) },
   })
   return data
 }
 
-export async function fetchCostAvoidance(
-  tenantId: string,
-  year?: number
-): Promise<CostAvoidanceReport> {
+export async function fetchCostAvoidance(year?: number): Promise<CostAvoidanceReport> {
   const { data } = await apiClient.get<CostAvoidanceReport>(
-    `/reports/${tenantId}/cost-avoidance`,
+    `/reports/${DEFAULT_TENANT_ID}/cost-avoidance`,
     { params: year ? { year } : {} }
   )
   return data
 }
 
-export async function fetchAssetReport(tenantId: string, assetId: string) {
-  const { data } = await apiClient.get(`/reports/${tenantId}/asset/${assetId}`)
+export async function fetchAssetReport(assetId: string) {
+  const { data } = await apiClient.get(`/reports/${DEFAULT_TENANT_ID}/asset/${assetId}`)
   return data
 }

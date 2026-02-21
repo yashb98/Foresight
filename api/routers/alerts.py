@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.dependencies import TenantContext, get_current_tenant, get_db, verify_tenant_access
+from api.dependencies import get_db
 from api.models.schemas import AlertListResponse, AlertResponse, AlertUpdateRequest
 
 log = logging.getLogger(__name__)
@@ -31,7 +31,6 @@ async def list_alerts(
         None, alias="status", description="Filter by status: active|acknowledged|resolved"
     ),
     limit: int = Query(100, ge=1, le=500),
-    current_tenant: TenantContext = Depends(get_current_tenant),
     db: AsyncSession = Depends(get_db),
 ) -> AlertListResponse:
     """
@@ -39,15 +38,12 @@ async def list_alerts(
     Active alerts are returned by default.
 
     Args:
-        tenant_id:    Must match JWT token tenant.
+        tenant_id:    Tenant UUID.
         severity:     Optional severity filter.
         alert_status: Optional status filter (default: active).
         limit:        Maximum number of alerts to return.
-        current_tenant: Injected JWT context.
         db:           Database session.
     """
-    verify_tenant_access(tenant_id, current_tenant)
-
     conditions = ["tenant_id = :tenant_id"]
     params: dict = {"tenant_id": tenant_id, "limit": limit}
 
@@ -118,20 +114,17 @@ async def update_alert(
     tenant_id: str,
     alert_id: str,
     update: AlertUpdateRequest,
-    current_tenant: TenantContext = Depends(get_current_tenant),
     db: AsyncSession = Depends(get_db),
 ) -> AlertResponse:
     """
     Update an alert's status to acknowledged or resolved.
 
     Args:
-        tenant_id:      Tenant UUID (must match token).
+        tenant_id:      Tenant UUID.
         alert_id:       Alert UUID to update.
         update:         New status and optional notes.
-        current_tenant: Injected JWT context.
         db:             Database session.
     """
-    verify_tenant_access(tenant_id, current_tenant)
     now = datetime.now(tz=timezone.utc)
 
     extra_cols = ""
@@ -139,10 +132,10 @@ async def update_alert(
 
     if update.status == "acknowledged":
         extra_cols = ", acknowledged_at = :now, acknowledged_by = :by"
-        extra_params = {"now": now, "by": current_tenant.client_id}
+        extra_params = {"now": now, "by": "system"}
     elif update.status == "resolved":
         extra_cols = ", resolved_at = :now, acknowledged_by = :by"
-        extra_params = {"now": now, "by": current_tenant.client_id}
+        extra_params = {"now": now, "by": "system"}
 
     await db.execute(
         text(f"""

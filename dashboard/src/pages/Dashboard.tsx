@@ -19,6 +19,7 @@ import { useTrends } from '@/hooks/useTrends'
 import { formatDate } from '@/lib/utils'
 import {
   Cpu, ShieldAlert, AlertTriangle, Activity, TrendingUp,
+  ArrowUpRight, ArrowDownRight
 } from 'lucide-react'
 
 function KpiCard({
@@ -27,6 +28,8 @@ function KpiCard({
   subtitle,
   icon: Icon,
   iconColour = 'text-primary',
+  trend,
+  trendUp,
   isLoading = false,
 }: {
   title: string
@@ -34,11 +37,14 @@ function KpiCard({
   subtitle?: string
   icon: React.FC<{ className?: string }>
   iconColour?: string
+  trend?: string
+  trendUp?: boolean
   isLoading?: boolean
 }) {
   return (
-    <Card>
-      <CardContent className="pt-5 pb-4">
+    <Card className="relative overflow-hidden">
+      <div className="absolute inset-0 bg-gradient-radial opacity-50" />
+      <CardContent className="relative pt-5 pb-4">
         <div className="flex items-start justify-between">
           <div>
             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{title}</p>
@@ -48,8 +54,14 @@ function KpiCard({
               <p className="mt-1 text-3xl font-bold text-foreground">{value}</p>
             )}
             {subtitle && <p className="mt-1 text-xs text-muted-foreground">{subtitle}</p>}
+            {trend && (
+              <div className={`flex items-center gap-1 mt-2 text-xs ${trendUp ? 'text-emerald-400' : 'text-red-400'}`}>
+                {trendUp ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
+                <span>{trend}</span>
+              </div>
+            )}
           </div>
-          <div className={`rounded-lg bg-muted/50 p-2.5 ${iconColour}`}>
+          <div className={`rounded-xl bg-muted/50 p-2.5 ${iconColour}`}>
             <Icon className="h-5 w-5" />
           </div>
         </div>
@@ -78,6 +90,8 @@ export function Dashboard() {
             subtitle={`${fleet?.active_assets ?? 0} active`}
             icon={Cpu}
             iconColour="text-blue-400"
+            trend="+2 this month"
+            trendUp={true}
             isLoading={fleetLoading}
           />
           <KpiCard
@@ -86,6 +100,8 @@ export function Dashboard() {
             subtitle="Critical + High"
             icon={ShieldAlert}
             iconColour="text-red-400"
+            trend="-5 from last week"
+            trendUp={false}
             isLoading={fleetLoading}
           />
           <KpiCard
@@ -102,6 +118,8 @@ export function Dashboard() {
             subtitle="0–100 composite score"
             icon={Activity}
             iconColour="text-emerald-400"
+            trend="+1.2% improvement"
+            trendUp={true}
             isLoading={fleetLoading}
           />
         </div>

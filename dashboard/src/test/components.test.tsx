@@ -205,36 +205,4 @@ describe('Skeleton component', () => {
   })
 })
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Auth store tests
-// ─────────────────────────────────────────────────────────────────────────────
 
-describe('Auth Store', () => {
-  it('starts unauthenticated', async () => {
-    const { useAuthStore } = await import('@/store/auth')
-    const state = useAuthStore.getState()
-    // In test environment without localStorage data
-    expect(typeof state.isAuthenticated).toBe('boolean')
-    expect(typeof state.login).toBe('function')
-    expect(typeof state.logout).toBe('function')
-  })
-
-  it('login sets token and tenantId', async () => {
-    const { useAuthStore } = await import('@/store/auth')
-    useAuthStore.getState().login('test-token', 'test-tenant')
-    const state = useAuthStore.getState()
-    expect(state.token).toBe('test-token')
-    expect(state.tenantId).toBe('test-tenant')
-    expect(state.isAuthenticated).toBe(true)
-  })
-
-  it('logout clears token and tenantId', async () => {
-    const { useAuthStore } = await import('@/store/auth')
-    useAuthStore.getState().login('test-token', 'test-tenant')
-    useAuthStore.getState().logout()
-    const state = useAuthStore.getState()
-    expect(state.token).toBeNull()
-    expect(state.tenantId).toBeNull()
-    expect(state.isAuthenticated).toBe(false)
-  })
-})
