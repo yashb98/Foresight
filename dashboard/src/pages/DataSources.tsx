@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Input } from '@/components/ui/input'
+import { AddDataSourceModal } from '@/components/data-sources/AddDataSourceModal'
 import { 
   useDataSources, 
   useDeleteDataSource, 
@@ -52,6 +53,7 @@ const SOURCE_ICONS: Record<DataSourceType, React.FC<{ className?: string }>> = {
 
 export function DataSources() {
   const [search, setSearch] = useState('')
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false)
   const { data, isLoading } = useDataSources()
   const sources = data?.sources ?? []
   
@@ -110,7 +112,7 @@ export function DataSources() {
               onChange={(e) => setSearch(e.target.value)}
             />
           </div>
-          <Button className="gap-2">
+          <Button className="gap-2" onClick={() => setIsAddModalOpen(true)}>
             <Plus className="h-4 w-4" />
             Add Connection
           </Button>
@@ -124,7 +126,7 @@ export function DataSources() {
             ))}
           </div>
         ) : filtered.length === 0 ? (
-          <EmptyState />
+          <EmptyState onAdd={() => setIsAddModalOpen(true)} />
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {filtered.map((source) => (
@@ -132,6 +134,11 @@ export function DataSources() {
             ))}
           </div>
         )}
+        
+        <AddDataSourceModal 
+          open={isAddModalOpen} 
+          onClose={() => setIsAddModalOpen(false)} 
+        />
       </div>
     </div>
   )
@@ -276,7 +283,7 @@ function StatusBadge({ status }: { status: ConnectionStatus }) {
   )
 }
 
-function EmptyState() {
+function EmptyState({ onAdd }: { onAdd: () => void }) {
   return (
     <Card className="border-dashed">
       <CardContent className="py-16 flex flex-col items-center text-muted-foreground">
@@ -285,7 +292,7 @@ function EmptyState() {
         </div>
         <p className="text-lg font-medium">No data sources configured</p>
         <p className="text-sm mt-1">Add your first connection to start importing data</p>
-        <Button className="mt-4 gap-2">
+        <Button className="mt-4 gap-2" onClick={onAdd}>
           <Plus className="h-4 w-4" />
           Add Connection
         </Button>
