@@ -43,11 +43,16 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-import kafka
+import kafka  # noqa: F401
 from kafka import KafkaProducer
 
 from common.logging_config import configure_logging
-from common.models import MaintenanceRecord, SAPEquipmentRecord, SAPWorkOrder, SourceSystem
+from common.models import (  # noqa: F401
+    MaintenanceRecord,
+    SAPEquipmentRecord,
+    SAPWorkOrder,
+    SourceSystem,
+)
 from ingestion.minio_writer import MinIOWriter
 
 log = logging.getLogger(__name__)
@@ -67,7 +72,7 @@ SAP_EQUIPMENT_TYPES = {
 
 SAP_PLANTS = ["1000", "1001", "1002", "2000", "2001"]
 SAP_COST_CENTRES = ["CC-OPS-001", "CC-MAINT-002", "CC-PROD-003", "CC-UTIL-004"]
-SAP_ORDER_TYPES = ["PM01", "PM02", "PM03", "PM04"]   # PM01=Preventive, PM03=Corrective
+SAP_ORDER_TYPES = ["PM01", "PM02", "PM03", "PM04"]  # PM01=Preventive, PM03=Corrective
 SAP_ISTAT_CODES = ["I0001", "I0002", "I0045", "NOCO", "TECO"]  # status codes
 SAP_NOTIFICATION_TYPES = ["M1", "M2", "S3"]  # M1=Malfunction, M2=Maintenance, S3=Activity
 
@@ -92,12 +97,12 @@ def generate_equipment_master(
 
     return {
         # Core EQUI fields
-        "EQUNR": equnr,                    # Equipment number
+        "EQUNR": equnr,  # Equipment number
         "EQKTX": f"{type_desc} Unit {random.randint(1, 99):02d}",  # Short description
-        "EQART": asset_type.upper()[:4],   # Type of technical object
+        "EQART": asset_type.upper()[:4],  # Type of technical object
         "ANLNR": f"AN{random.randint(100000, 999999)}",  # Asset number (FI-AA)
-        "BRGEW": round(random.uniform(50, 5000), 1),     # Gross weight (kg)
-        "GEWEI": "KG",                     # Unit of weight
+        "BRGEW": round(random.uniform(50, 5000), 1),  # Gross weight (kg)
+        "GEWEI": "KG",  # Unit of weight
         "BAUJJ": random.randint(2005, 2022),  # Year of manufacture
         "INBDT": install_date.strftime("%Y%m%d"),  # Start-up date (SAP date format)
         "SWERK": random.choice(SAP_PLANTS),  # Maintenance plant
@@ -106,9 +111,9 @@ def generate_equipment_master(
         "TIDNR": f"TI{random.randint(10000, 99999)}",  # Technical identification
         "HERLD": random.choice(["DE", "US", "JP", "GB"]),  # Country of manufacture
         "HERST": random.choice(["Siemens", "GE", "ABB", "Emerson", "Schneider"]),  # Manufacturer
-        "TYPBZ": f"Model-{random.randint(100, 999)}",   # Model number
-        "SERGE": f"SN{random.randint(10000, 99999)}",   # Serial number
-        "ZZWARTY": "W24",                  # Custom: warranty type
+        "TYPBZ": f"Model-{random.randint(100, 999)}",  # Model number
+        "SERGE": f"SN{random.randint(10000, 99999)}",  # Serial number
+        "ZZWARTY": "W24",  # Custom: warranty type
         # FORESIGHT metadata (non-SAP)
         "_foresight_asset_id": asset_id,
         "_foresight_tenant_id": tenant_id,
@@ -146,28 +151,30 @@ def generate_work_orders(
 
         aufnr = f"WO-{random.randint(1000000, 9999999)}"
 
-        orders.append({
-            # Core AUFK fields
-            "AUFNR": aufnr,                           # Order number
-            "AUART": order_type,                       # Order type
-            "EQUNR": equnr,                            # Equipment number
-            "KTEXT": _work_order_description(order_type),  # Short description
-            "ERDAT": start_date.strftime("%Y%m%d"),   # Creation date
-            "AEDAT": start_date.strftime("%Y%m%d"),   # Last change date
-            "GSTRP": start_date.strftime("%Y%m%d"),   # Scheduled start date
-            "GLTRP": end_date.strftime("%Y%m%d"),     # Scheduled finish date
-            "IDAT2": end_date.strftime("%Y%m%d"),     # Actual completion date
-            "ISTAT": random.choice(SAP_ISTAT_CODES),  # Object status
-            "KOSTL": random.choice(SAP_COST_CENTRES),  # Cost centre
-            "WAERS": "GBP",                            # Currency
-            "GKOST": round(random.uniform(200, 15000), 2),  # Actual costs
-            "IPHAS": "4",                              # Processing phase (4=closed)
-            # FORESIGHT metadata
-            "_foresight_asset_id": asset_id,
-            "_foresight_tenant_id": tenant_id,
-            "_foresight_maintenance_type": _order_type_to_maintenance_type(order_type),
-            "_foresight_extracted_at": datetime.now(tz=timezone.utc).isoformat(),
-        })
+        orders.append(
+            {
+                # Core AUFK fields
+                "AUFNR": aufnr,  # Order number
+                "AUART": order_type,  # Order type
+                "EQUNR": equnr,  # Equipment number
+                "KTEXT": _work_order_description(order_type),  # Short description
+                "ERDAT": start_date.strftime("%Y%m%d"),  # Creation date
+                "AEDAT": start_date.strftime("%Y%m%d"),  # Last change date
+                "GSTRP": start_date.strftime("%Y%m%d"),  # Scheduled start date
+                "GLTRP": end_date.strftime("%Y%m%d"),  # Scheduled finish date
+                "IDAT2": end_date.strftime("%Y%m%d"),  # Actual completion date
+                "ISTAT": random.choice(SAP_ISTAT_CODES),  # Object status
+                "KOSTL": random.choice(SAP_COST_CENTRES),  # Cost centre
+                "WAERS": "GBP",  # Currency
+                "GKOST": round(random.uniform(200, 15000), 2),  # Actual costs
+                "IPHAS": "4",  # Processing phase (4=closed)
+                # FORESIGHT metadata
+                "_foresight_asset_id": asset_id,
+                "_foresight_tenant_id": tenant_id,
+                "_foresight_maintenance_type": _order_type_to_maintenance_type(order_type),
+                "_foresight_extracted_at": datetime.now(tz=timezone.utc).isoformat(),
+            }
+        )
     return orders
 
 
@@ -199,43 +206,49 @@ def generate_notifications(
 
         qmnum = f"QM-{random.randint(10000000, 99999999)}"
 
-        notifications.append({
-            "QMNUM": qmnum,                              # Notification number
-            "QMART": notif_type,                          # Notification type
-            "EQUNR": equnr,                               # Equipment
-            "QMTXT": _notification_description(notif_type),  # Short text
-            "QMDAT": notif_date.strftime("%Y%m%d"),      # Notification date
-            "MZEIT": notif_date.strftime("%H%M%S"),      # Time of notification
-            "PRIOK": str(random.randint(1, 4)),           # Priority (1=highest)
-            "QMCOD": f"C{random.randint(100, 999)}",     # Coding (failure code)
-            "MAKNX": _failure_code_text(),                # Failure mode text
-            "OTEIL": f"COMP-{random.randint(1, 50):02d}",  # Object part
-            "AUFNR": f"WO-{random.randint(1000000, 9999999)}",  # Linked work order
-            "STAT": random.choice(["NOCO", "OSNO", "NOPR"]),   # System status
-            # FORESIGHT metadata
-            "_foresight_asset_id": asset_id,
-            "_foresight_tenant_id": tenant_id,
-            "_foresight_extracted_at": datetime.now(tz=timezone.utc).isoformat(),
-        })
+        notifications.append(
+            {
+                "QMNUM": qmnum,  # Notification number
+                "QMART": notif_type,  # Notification type
+                "EQUNR": equnr,  # Equipment
+                "QMTXT": _notification_description(notif_type),  # Short text
+                "QMDAT": notif_date.strftime("%Y%m%d"),  # Notification date
+                "MZEIT": notif_date.strftime("%H%M%S"),  # Time of notification
+                "PRIOK": str(random.randint(1, 4)),  # Priority (1=highest)
+                "QMCOD": f"C{random.randint(100, 999)}",  # Coding (failure code)
+                "MAKNX": _failure_code_text(),  # Failure mode text
+                "OTEIL": f"COMP-{random.randint(1, 50):02d}",  # Object part
+                "AUFNR": f"WO-{random.randint(1000000, 9999999)}",  # Linked work order
+                "STAT": random.choice(["NOCO", "OSNO", "NOPR"]),  # System status
+                # FORESIGHT metadata
+                "_foresight_asset_id": asset_id,
+                "_foresight_tenant_id": tenant_id,
+                "_foresight_extracted_at": datetime.now(tz=timezone.utc).isoformat(),
+            }
+        )
     return notifications
 
 
 def _work_order_description(order_type: str) -> str:
     """Map SAP order type to a human-readable description."""
     descriptions = {
-        "PM01": random.choice([
-            "Scheduled preventive maintenance",
-            "Lubrication and inspection",
-            "Filter replacement",
-            "Annual overhaul",
-        ]),
+        "PM01": random.choice(
+            [
+                "Scheduled preventive maintenance",
+                "Lubrication and inspection",
+                "Filter replacement",
+                "Annual overhaul",
+            ]
+        ),
         "PM02": random.choice(["Calibration check", "Instrument testing"]),
-        "PM03": random.choice([
-            "Emergency corrective repair",
-            "Breakdown maintenance",
-            "Bearing replacement",
-            "Seal failure repair",
-        ]),
+        "PM03": random.choice(
+            [
+                "Emergency corrective repair",
+                "Breakdown maintenance",
+                "Bearing replacement",
+                "Seal failure repair",
+            ]
+        ),
         "PM04": "Predictive maintenance follow-up",
     }
     return descriptions.get(order_type, "General maintenance")
@@ -243,19 +256,26 @@ def _work_order_description(order_type: str) -> str:
 
 def _order_type_to_maintenance_type(order_type: str) -> str:
     """Map SAP order type to FORESIGHT maintenance type."""
-    mapping = {"PM01": "preventive", "PM02": "inspection", "PM03": "corrective", "PM04": "predictive"}
+    mapping = {
+        "PM01": "preventive",
+        "PM02": "inspection",
+        "PM03": "corrective",
+        "PM04": "predictive",
+    }
     return mapping.get(order_type, "manual")
 
 
 def _notification_description(notif_type: str) -> str:
     """Map notification type to description text."""
     descriptions = {
-        "M1": random.choice([
-            "Malfunction report — abnormal noise detected",
-            "Equipment vibration exceeding limits",
-            "Oil leak observed",
-            "Temperature spike — investigation required",
-        ]),
+        "M1": random.choice(
+            [
+                "Malfunction report — abnormal noise detected",
+                "Equipment vibration exceeding limits",
+                "Oil leak observed",
+                "Temperature spike — investigation required",
+            ]
+        ),
         "M2": "Scheduled maintenance notification",
         "S3": "Activity report — inspection completed",
     }
@@ -264,23 +284,26 @@ def _notification_description(notif_type: str) -> str:
 
 def _failure_code_text() -> str:
     """Generate a realistic failure mode description."""
-    return random.choice([
-        "Bearing wear",
-        "Seal degradation",
-        "Impeller erosion",
-        "Coupling misalignment",
-        "Winding insulation breakdown",
-        "Cavitation damage",
-        "Corrosion",
-        "Fatigue crack",
-        "Thermal overload",
-        "Blockage",
-    ])
+    return random.choice(
+        [
+            "Bearing wear",
+            "Seal degradation",
+            "Impeller erosion",
+            "Coupling misalignment",
+            "Winding insulation breakdown",
+            "Cavitation damage",
+            "Corrosion",
+            "Fatigue crack",
+            "Thermal overload",
+            "Blockage",
+        ]
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SAP Connector class
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class SAPConnector:
     """
@@ -303,16 +326,12 @@ class SAPConnector:
     ) -> None:
         self.tenant_id = tenant_id
         self.mode = mode
-        self._bootstrap = kafka_bootstrap or os.getenv(
-            "KAFKA_BOOTSTRAP_SERVERS", "kafka:9092"
-        )
+        self._bootstrap = kafka_bootstrap or os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
         self._topic = os.getenv("KAFKA_TOPIC_MAINTENANCE", "maintenance-events")
         self._producer: Optional[KafkaProducer] = None
         self._minio: Optional[MinIOWriter] = None
 
-        log.info(
-            "SAPConnector initialised [mode=%s, tenant=%s]", mode, tenant_id
-        )
+        log.info("SAPConnector initialised [mode=%s, tenant=%s]", mode, tenant_id)
 
     def _get_producer(self) -> KafkaProducer:
         """Lazily initialise Kafka producer."""
@@ -382,7 +401,7 @@ class SAPConnector:
             equipment_records.append(eq_record)
             equnr = eq_record["EQUNR"]
 
-            wo_count = max(1, int(days_back / 30))   # ~1 WO per month
+            wo_count = max(1, int(days_back / 30))  # ~1 WO per month
             asset_wos = generate_work_orders(
                 equnr, asset_id, self.tenant_id, count=wo_count, days_back=days_back
             )
@@ -420,9 +439,7 @@ class SAPConnector:
                 "pyrfc not installed. Install it for live SAP connectivity, "
                 "or use --mode mock for development."
             )
-        raise NotImplementedError(
-            "Live SAP RFC extraction not yet implemented. Use --mode mock."
-        )
+        raise NotImplementedError("Live SAP RFC extraction not yet implemented. Use --mode mock.")
 
     def publish_and_store(self, data: Dict[str, Any]) -> None:
         """

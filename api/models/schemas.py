@@ -13,10 +13,10 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
-
 # =============================================================================
 # Auth
 # =============================================================================
+
 
 class TokenRequest(BaseModel):
     """POST /auth/token request body."""
@@ -38,6 +38,7 @@ class TokenResponse(BaseModel):
 # Assets
 # =============================================================================
 
+
 class HealthScoreSummary(BaseModel):
     """Embedded health score for the asset list view."""
 
@@ -45,7 +46,7 @@ class HealthScoreSummary(BaseModel):
     failure_prob_7d: Optional[float] = None
     failure_prob_30d: Optional[float] = None
     score_date: Optional[date] = None
-    risk_level: Optional[str] = None   # low | medium | high | critical
+    risk_level: Optional[str] = None  # low | medium | high | critical
 
 
 class AssetResponse(BaseModel):
@@ -96,6 +97,7 @@ class AssetDetailResponse(AssetResponse):
 # Predictions
 # =============================================================================
 
+
 class PredictionRequest(BaseModel):
     """POST /predict request body."""
 
@@ -134,14 +136,13 @@ class PredictionResponse(BaseModel):
     model_name: str = "foresight-failure-predictor"
 
     @classmethod
-    def from_prediction_result(cls, result: "PredictionResult") -> "PredictionResponse":
+    def from_prediction_result(cls, result: "PredictionResult") -> "PredictionResponse":  # noqa: F821,E501
         """Convert from internal PredictionResult to API response schema."""
         prob_30d = result.failure_prob_30d
         risk = (
-            "critical" if prob_30d > 0.70 else
-            "high" if prob_30d > 0.40 else
-            "medium" if prob_30d > 0.15 else
-            "low"
+            "critical"
+            if prob_30d > 0.70
+            else "high" if prob_30d > 0.40 else "medium" if prob_30d > 0.15 else "low"
         )
         return cls(
             asset_id=result.asset_id,
@@ -161,6 +162,7 @@ class PredictionResponse(BaseModel):
 # =============================================================================
 # Alerts
 # =============================================================================
+
 
 class AlertResponse(BaseModel):
     """Single alert in the alert feed."""
@@ -202,6 +204,7 @@ class AlertListResponse(BaseModel):
 # =============================================================================
 # Threshold Rules
 # =============================================================================
+
 
 class ThresholdRuleRequest(BaseModel):
     """POST /rules/{tenant_id} request body — create or update a rule."""
@@ -251,6 +254,7 @@ class RuleListResponse(BaseModel):
 # =============================================================================
 # Alert Rules (new detailed schemas for /rules router)
 # =============================================================================
+
 
 class AlertRuleCreate(BaseModel):
     """POST /rules/{tenant_id} — create a new alert rule."""
@@ -305,6 +309,7 @@ class AlertRuleResponse(BaseModel):
 # =============================================================================
 # Report Schemas (new detailed schemas for /reports router)
 # =============================================================================
+
 
 class FleetSummaryResponse(BaseModel):
     """GET /reports/{tenant_id}/summary — fleet KPI dashboard."""
@@ -373,6 +378,7 @@ class CostAvoidanceReport(BaseModel):
 # Reports (legacy metadata schemas)
 # =============================================================================
 
+
 class ReportMetadata(BaseModel):
     """Metadata about a generated report."""
 
@@ -410,11 +416,12 @@ class GenerateReportRequest(BaseModel):
 # System Health
 # =============================================================================
 
+
 class ServiceStatus(BaseModel):
     """Status of a single downstream service."""
 
     name: str
-    status: str   # healthy | degraded | unhealthy
+    status: str  # healthy | degraded | unhealthy
     latency_ms: Optional[float] = None
     message: Optional[str] = None
 

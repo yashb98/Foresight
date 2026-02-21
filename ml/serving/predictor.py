@@ -25,13 +25,19 @@ from common.models import PredictionResult
 log = logging.getLogger(__name__)
 
 MODEL_NAME = "foresight-failure-predictor"
-CACHE_TTL_SECONDS = 300   # Refresh model version check every 5 minutes
+CACHE_TTL_SECONDS = 300  # Refresh model version check every 5 minutes
 
 FEATURE_COLS = [
-    "temp_mean_7d", "temp_std_7d", "temp_max_24h",
-    "vibration_mean_7d", "vibration_std_7d", "vibration_max_24h",
-    "pressure_mean_7d", "pressure_std_7d",
-    "rpm_mean_7d", "rpm_std_7d",
+    "temp_mean_7d",
+    "temp_std_7d",
+    "temp_max_24h",
+    "vibration_mean_7d",
+    "vibration_std_7d",
+    "vibration_max_24h",
+    "pressure_mean_7d",
+    "pressure_std_7d",
+    "rpm_mean_7d",
+    "rpm_std_7d",
     "days_since_last_maintenance",
     "days_since_install",
     "failure_count_90d",
@@ -58,9 +64,7 @@ class ModelPredictor:
         model_name: str = MODEL_NAME,
         cache_ttl: int = CACHE_TTL_SECONDS,
     ) -> None:
-        self._mlflow_uri = mlflow_uri or os.getenv(
-            "MLFLOW_TRACKING_URI", "http://mlflow:5000"
-        )
+        self._mlflow_uri = mlflow_uri or os.getenv("MLFLOW_TRACKING_URI", "http://mlflow:5000")
         self._model_name = model_name
         self._cache_ttl = cache_ttl
         self._model = None
@@ -106,7 +110,7 @@ class ModelPredictor:
                 return
 
             if production_version == self._model_version:
-                return   # No change — keep cached model
+                return  # No change — keep cached model
 
             log.info(
                 "Loading model: %s v%s from MLflow",
@@ -203,7 +207,7 @@ class ModelPredictor:
     def _compute_top_features(
         self,
         model: Any,
-        X: "np.ndarray",
+        X: "np.ndarray",  # noqa: F821
         features: Dict[str, float],
     ) -> List[Dict[str, Any]]:
         """

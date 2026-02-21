@@ -34,9 +34,8 @@ import json
 import logging
 import os
 import sys
-import uuid
-from datetime import date, datetime, timedelta
-from typing import Any, Dict, List, Optional, Tuple
+from datetime import date, timedelta
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -55,10 +54,16 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 # Feature columns (must match feature_engineering.py output)
 # ─────────────────────────────────────────────────────────────────────────────
 FEATURE_COLS = [
-    "temp_mean_7d", "temp_std_7d", "temp_max_24h",
-    "vibration_mean_7d", "vibration_std_7d", "vibration_max_24h",
-    "pressure_mean_7d", "pressure_std_7d",
-    "rpm_mean_7d", "rpm_std_7d",
+    "temp_mean_7d",
+    "temp_std_7d",
+    "temp_max_24h",
+    "vibration_mean_7d",
+    "vibration_std_7d",
+    "vibration_max_24h",
+    "pressure_mean_7d",
+    "pressure_std_7d",
+    "rpm_mean_7d",
+    "rpm_std_7d",
     "days_since_last_maintenance",
     "days_since_install",
     "failure_count_90d",
@@ -74,6 +79,7 @@ MODEL_NAME = "foresight-failure-predictor"
 # ─────────────────────────────────────────────────────────────────────────────
 # Synthetic data generator (for initial training without Hive)
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def generate_training_data(
     n_assets: int = 30,
@@ -104,7 +110,7 @@ def generate_training_data(
 
     for asset_idx in range(n_assets):
         # Asset baseline characteristics (some assets are more failure-prone)
-        baseline_health = np.random.uniform(0.6, 1.0)   # 0 = poor, 1 = perfect
+        baseline_health = np.random.uniform(0.6, 1.0)  # 0 = poor, 1 = perfect
         install_age = np.random.randint(365, 365 * 15)
 
         for day in range(n_days):
@@ -132,28 +138,34 @@ def generate_training_data(
             # Label: failure within 7 and 30 days
             fail_7d = int(np.random.random() < failure_score * failure_rate * 14)
             fail_30d = int(np.random.random() < failure_score * failure_rate * 60)
-            fail_30d = max(fail_7d, fail_30d)   # 7d failure implies 30d failure
+            fail_30d = max(fail_7d, fail_30d)  # 7d failure implies 30d failure
 
-            rows.append({
-                "asset_id": f"asset-{asset_idx:03d}",
-                "feature_date": str(date.today() - timedelta(days=n_days - day)),
-                "temp_mean_7d": round(max(0, temp_mean), 2),
-                "temp_std_7d": round(max(0, np.random.normal(3, 1 + degradation * 3)), 2),
-                "temp_max_24h": round(max(0, temp_mean + np.random.uniform(5, 20)), 2),
-                "vibration_mean_7d": round(max(0, vibration_mean), 3),
-                "vibration_std_7d": round(max(0, np.random.normal(1, 0.5 + degradation * 2)), 3),
-                "vibration_max_24h": round(max(0, vibration_mean + np.random.uniform(2, 15)), 3),
-                "pressure_mean_7d": round(max(0, pressure_mean), 2),
-                "pressure_std_7d": round(max(0, np.random.normal(5, 2 + degradation * 5)), 2),
-                "rpm_mean_7d": round(max(0, rpm_mean), 1),
-                "rpm_std_7d": round(max(0, np.random.normal(50, 20 + degradation * 80)), 1),
-                "days_since_last_maintenance": float(days_since_maint),
-                "days_since_install": float(install_age + day),
-                "failure_count_90d": failure_count,
-                "maintenance_cost_90d": round(failure_count * np.random.uniform(500, 5000), 2),
-                TARGET_7D: fail_7d,
-                TARGET_30D: fail_30d,
-            })
+            rows.append(
+                {
+                    "asset_id": f"asset-{asset_idx:03d}",
+                    "feature_date": str(date.today() - timedelta(days=n_days - day)),
+                    "temp_mean_7d": round(max(0, temp_mean), 2),
+                    "temp_std_7d": round(max(0, np.random.normal(3, 1 + degradation * 3)), 2),
+                    "temp_max_24h": round(max(0, temp_mean + np.random.uniform(5, 20)), 2),
+                    "vibration_mean_7d": round(max(0, vibration_mean), 3),
+                    "vibration_std_7d": round(
+                        max(0, np.random.normal(1, 0.5 + degradation * 2)), 3
+                    ),
+                    "vibration_max_24h": round(
+                        max(0, vibration_mean + np.random.uniform(2, 15)), 3
+                    ),
+                    "pressure_mean_7d": round(max(0, pressure_mean), 2),
+                    "pressure_std_7d": round(max(0, np.random.normal(5, 2 + degradation * 5)), 2),
+                    "rpm_mean_7d": round(max(0, rpm_mean), 1),
+                    "rpm_std_7d": round(max(0, np.random.normal(50, 20 + degradation * 80)), 1),
+                    "days_since_last_maintenance": float(days_since_maint),
+                    "days_since_install": float(install_age + day),
+                    "failure_count_90d": failure_count,
+                    "maintenance_cost_90d": round(failure_count * np.random.uniform(500, 5000), 2),
+                    TARGET_7D: fail_7d,
+                    TARGET_30D: fail_30d,
+                }
+            )
 
     df = pd.DataFrame(rows)
     log.info(
@@ -168,6 +180,7 @@ def generate_training_data(
 # ─────────────────────────────────────────────────────────────────────────────
 # Training pipeline
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def train_models(
     df: pd.DataFrame,
@@ -190,7 +203,7 @@ def train_models(
     import mlflow
     import mlflow.sklearn
     import mlflow.xgboost
-    import shap
+    import shap  # noqa: F401
     from imblearn.over_sampling import SMOTE
     from sklearn.ensemble import RandomForestClassifier
     from sklearn.metrics import (
@@ -223,14 +236,21 @@ def train_models(
 
     log.info(
         "Dataset splits: train=%d, val=%d, test=%d | positive class: %.3f%%",
-        len(X_train), len(X_val), len(X_test), y_train.mean() * 100,
+        len(X_train),
+        len(X_val),
+        len(X_test),
+        y_train.mean() * 100,
     )
 
     # Handle class imbalance with SMOTE
-    if y_train.sum() > 5:   # Need at least 5 positive samples for SMOTE
+    if y_train.sum() > 5:  # Need at least 5 positive samples for SMOTE
         smote = SMOTE(random_state=42, k_neighbors=min(5, y_train.sum() - 1))
         X_train, y_train = smote.fit_resample(X_train, y_train)
-        log.info("SMOTE applied: %d training samples (%.1f%% positive)", len(X_train), y_train.mean() * 100)
+        log.info(
+            "SMOTE applied: %d training samples (%.1f%% positive)",
+            len(X_train),
+            y_train.mean() * 100,
+        )
 
     best_model = None
     best_val_auc = 0.0
@@ -240,21 +260,35 @@ def train_models(
     models_to_train = [
         (
             "RandomForest",
-            Pipeline([
-                ("scaler", StandardScaler()),
-                ("clf", RandomForestClassifier(
-                    n_estimators=200, max_depth=12, min_samples_leaf=5,
-                    class_weight="balanced", random_state=42, n_jobs=-1,
-                )),
-            ]),
+            Pipeline(
+                [
+                    ("scaler", StandardScaler()),
+                    (
+                        "clf",
+                        RandomForestClassifier(
+                            n_estimators=200,
+                            max_depth=12,
+                            min_samples_leaf=5,
+                            class_weight="balanced",
+                            random_state=42,
+                            n_jobs=-1,
+                        ),
+                    ),
+                ]
+            ),
         ),
         (
             "XGBoost",
             XGBClassifier(
-                n_estimators=300, max_depth=6, learning_rate=0.05,
-                subsample=0.8, colsample_bytree=0.8,
+                n_estimators=300,
+                max_depth=6,
+                learning_rate=0.05,
+                subsample=0.8,
+                colsample_bytree=0.8,
                 scale_pos_weight=max(1, (y_train == 0).sum() / max(1, (y_train == 1).sum())),
-                eval_metric="auc", random_state=42, n_jobs=-1,
+                eval_metric="auc",
+                random_state=42,
+                n_jobs=-1,
                 verbosity=0,
             ),
         ),
@@ -269,8 +303,11 @@ def train_models(
                 model.fit(X_train, y_train)
 
             # Evaluate on validation set
-            val_probs = model.predict_proba(X_val)[:, 1] if hasattr(model, "predict_proba") \
+            val_probs = (
+                model.predict_proba(X_val)[:, 1]
+                if hasattr(model, "predict_proba")
                 else model.predict(X_val)
+            )
             val_auc = roc_auc_score(y_val, val_probs)
             val_ap = average_precision_score(y_val, val_probs)
 
@@ -280,33 +317,46 @@ def train_models(
             val_recall = recall_score(y_val, val_preds, zero_division=0)
 
             # Evaluate on test set
-            test_probs = model.predict_proba(X_test)[:, 1] if hasattr(model, "predict_proba") \
+            test_probs = (
+                model.predict_proba(X_test)[:, 1]
+                if hasattr(model, "predict_proba")
                 else model.predict(X_test)
+            )
             test_auc = roc_auc_score(y_test, test_probs)
 
             log.info(
                 "%s [%s] — val_AUC=%.4f, val_F1=%.4f, val_P=%.4f, val_R=%.4f, test_AUC=%.4f",
-                model_type, target, val_auc, val_f1, val_precision, val_recall, test_auc,
+                model_type,
+                target,
+                val_auc,
+                val_f1,
+                val_precision,
+                val_recall,
+                test_auc,
             )
 
             # Log to MLflow
-            mlflow.log_params({
-                "model_type": model_type,
-                "target": target,
-                "n_features": len(available_cols),
-                "train_size": len(X_train),
-                "val_size": len(X_val),
-                "test_size": len(X_test),
-                "smote_applied": y_train.sum() > 5,
-            })
-            mlflow.log_metrics({
-                "val_roc_auc": val_auc,
-                "val_avg_precision": val_ap,
-                "val_f1": val_f1,
-                "val_precision": val_precision,
-                "val_recall": val_recall,
-                "test_roc_auc": test_auc,
-            })
+            mlflow.log_params(
+                {
+                    "model_type": model_type,
+                    "target": target,
+                    "n_features": len(available_cols),
+                    "train_size": len(X_train),
+                    "val_size": len(X_val),
+                    "test_size": len(X_test),
+                    "smote_applied": y_train.sum() > 5,
+                }
+            )
+            mlflow.log_metrics(
+                {
+                    "val_roc_auc": val_auc,
+                    "val_avg_precision": val_ap,
+                    "val_f1": val_f1,
+                    "val_precision": val_precision,
+                    "val_recall": val_recall,
+                    "test_roc_auc": test_auc,
+                }
+            )
 
             # SHAP feature importance
             try:
@@ -317,13 +367,10 @@ def train_models(
                     importances = model.feature_importances_
 
                 feature_importance = {
-                    col: float(imp)
-                    for col, imp in zip(available_cols, importances)
+                    col: float(imp) for col, imp in zip(available_cols, importances)
                 }
                 # Log top 5 features
-                for feat, imp in sorted(
-                    feature_importance.items(), key=lambda x: -x[1]
-                )[:5]:
+                for feat, imp in sorted(feature_importance.items(), key=lambda x: -x[1])[:5]:
                     mlflow.log_metric(f"feature_imp_{feat}", imp)
 
             except Exception as exc:
@@ -337,7 +384,7 @@ def train_models(
 
             if val_auc > best_val_auc:
                 best_val_auc = val_auc
-                best_model = model
+                best_model = model  # noqa: F841
                 best_run_id = run.info.run_id
                 best_model_type = model_type
 
@@ -349,7 +396,7 @@ def train_models(
         try:
             client.create_registered_model(MODEL_NAME)
         except mlflow.exceptions.MlflowException:
-            pass   # Already exists
+            pass  # Already exists
 
         model_uri = f"runs:/{best_run_id}/model"
         mv = mlflow.register_model(model_uri, MODEL_NAME)
@@ -358,7 +405,9 @@ def train_models(
         client.set_registered_model_alias(MODEL_NAME, "Challenger", mv.version)
         log.info(
             "Registered challenger: %s v%s (AUC=%.4f)",
-            MODEL_NAME, mv.version, best_val_auc,
+            MODEL_NAME,
+            mv.version,
+            best_val_auc,
         )
     elif not best_version:
         # First time — register as Production directly
@@ -386,7 +435,7 @@ def train_models(
         "target": target,
     }
     log.info("Training complete: %s", json.dumps(result))
-    print(json.dumps(result))   # For Airflow task to parse
+    print(json.dumps(result))  # For Airflow task to parse
     return result
 
 

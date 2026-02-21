@@ -15,13 +15,14 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
-
 # =============================================================================
 # Enumerations
 # =============================================================================
 
+
 class AssetType(str, Enum):
     """Supported asset categories."""
+
     PUMP = "pump"
     TURBINE = "turbine"
     TRANSFORMER = "transformer"
@@ -34,6 +35,7 @@ class AssetType(str, Enum):
 
 class Criticality(str, Enum):
     """Asset criticality levels — drives alert priority and SLA."""
+
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
@@ -42,6 +44,7 @@ class Criticality(str, Enum):
 
 class Severity(str, Enum):
     """Alert / rule severity levels."""
+
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
@@ -50,6 +53,7 @@ class Severity(str, Enum):
 
 class AlertStatus(str, Enum):
     """Lifecycle state of an alert."""
+
     ACTIVE = "active"
     ACKNOWLEDGED = "acknowledged"
     RESOLVED = "resolved"
@@ -57,6 +61,7 @@ class AlertStatus(str, Enum):
 
 class RuleOperator(str, Enum):
     """Threshold comparison operators."""
+
     GT = "gt"
     LT = "lt"
     GTE = "gte"
@@ -66,6 +71,7 @@ class RuleOperator(str, Enum):
 
 class QualityFlag(str, Enum):
     """Sensor reading data quality."""
+
     GOOD = "good"
     DEGRADED = "degraded"
     SUSPECT = "suspect"
@@ -73,6 +79,7 @@ class QualityFlag(str, Enum):
 
 class MetricName(str, Enum):
     """Supported sensor metric types."""
+
     TEMPERATURE = "temperature"
     VIBRATION = "vibration"
     PRESSURE = "pressure"
@@ -84,6 +91,7 @@ class MetricName(str, Enum):
 
 class SourceSystem(str, Enum):
     """Source system for maintenance records."""
+
     SAP = "sap"
     ASSET_SUITE = "asset_suite"
     MANUAL = "manual"
@@ -91,6 +99,7 @@ class SourceSystem(str, Enum):
 
 class SubscriptionTier(str, Enum):
     """Tenant subscription levels."""
+
     STARTER = "starter"
     PROFESSIONAL = "professional"
     ENTERPRISE = "enterprise"
@@ -99,6 +108,7 @@ class SubscriptionTier(str, Enum):
 # =============================================================================
 # Core sensor / ingestion models
 # =============================================================================
+
 
 class SensorReading(BaseModel):
     """
@@ -123,6 +133,7 @@ class SensorReading(BaseModel):
     def value_must_be_finite(cls, v: float) -> float:
         """Reject NaN and infinite sensor values."""
         import math
+
         if not math.isfinite(v):
             raise ValueError(f"Sensor value must be finite, got: {v}")
         return round(v, 4)
@@ -190,6 +201,7 @@ class AssetSuiteRecord(BaseModel):
 # =============================================================================
 # Processed / alert models
 # =============================================================================
+
 
 class WindowedAggregate(BaseModel):
     """
@@ -262,8 +274,9 @@ class PredictionResult(BaseModel):
     predicted_at: datetime = Field(default_factory=datetime.utcnow)
     failure_prob_7d: float = Field(..., ge=0.0, le=1.0)
     failure_prob_30d: float = Field(..., ge=0.0, le=1.0)
-    health_score: float = Field(..., ge=0.0, le=100.0,
-                                description="Composite health score (100=perfect)")
+    health_score: float = Field(
+        ..., ge=0.0, le=100.0, description="Composite health score (100=perfect)"
+    )
     confidence_lower: float = Field(..., ge=0.0, le=1.0)
     confidence_upper: float = Field(..., ge=0.0, le=1.0)
     top_3_features: List[Dict[str, Any]] = Field(

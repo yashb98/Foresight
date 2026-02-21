@@ -23,7 +23,7 @@ from typing import Tuple
 
 from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
-from pyspark.sql import types as T
+from pyspark.sql import types as T  # noqa: F401
 
 log = logging.getLogger(__name__)
 
@@ -47,9 +47,18 @@ def apply_windowed_aggregations(
     # Apply watermark first (late data tolerance)
     watermarked = sensor_df.withWatermark("event_time", "10 minutes")
 
-    agg_5min = _aggregate_window(watermarked, window_duration="5 minutes", slide_duration="2 minutes 30 seconds", window_label="5min")
-    agg_1hr = _aggregate_window(watermarked, window_duration="1 hour", slide_duration="30 minutes", window_label="1hour")
-    agg_24hr = _aggregate_window(watermarked, window_duration="24 hours", slide_duration="12 hours", window_label="24hour")
+    agg_5min = _aggregate_window(
+        watermarked,
+        window_duration="5 minutes",
+        slide_duration="2 minutes 30 seconds",
+        window_label="5min",
+    )
+    agg_1hr = _aggregate_window(
+        watermarked, window_duration="1 hour", slide_duration="30 minutes", window_label="1hour"
+    )
+    agg_24hr = _aggregate_window(
+        watermarked, window_duration="24 hours", slide_duration="12 hours", window_label="24hour"
+    )
 
     log.info("Windowed aggregation streams configured: 5min, 1hour, 24hour")
     return agg_5min, agg_1hr, agg_24hr

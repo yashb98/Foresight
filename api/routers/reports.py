@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 import random
 from datetime import datetime, timedelta, timezone
-from typing import List, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, func
@@ -38,6 +38,7 @@ router = APIRouter()
 # ─────────────────────────────────────────────────────────────────────────────
 # GET /reports/{tenant_id}/summary
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 @router.get(
     "/{tenant_id}/summary",
@@ -66,7 +67,8 @@ async def fleet_summary(
         total_assets = total_q.scalar_one()
 
         active_q = await db.execute(
-            select(func.count()).select_from(Asset)
+            select(func.count())
+            .select_from(Asset)
             .where(Asset.tenant_id == tenant_id)
             .where(Asset.status == "active")
         )
@@ -102,6 +104,7 @@ async def fleet_summary(
 # GET /reports/{tenant_id}/asset/{asset_id}
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 @router.get(
     "/{tenant_id}/asset/{asset_id}",
     response_model=AssetHealthSummary,
@@ -124,9 +127,7 @@ async def asset_report(
         from infrastructure.db.base import Asset, Alert
 
         asset_q = await db.execute(
-            select(Asset)
-            .where(Asset.tenant_id == tenant_id)
-            .where(Asset.id == asset_id)
+            select(Asset).where(Asset.tenant_id == tenant_id).where(Asset.id == asset_id)
         )
         asset = asset_q.scalar_one_or_none()
         if not asset:
@@ -152,7 +153,12 @@ async def asset_report(
             days_to_maintenance=asset.days_to_maintenance,
             open_alert_count=sum(1 for a in recent_alerts if a.status == "open"),
             alert_summary=[
-                {"id": str(a.id), "severity": a.severity, "message": a.message, "created_at": a.created_at.isoformat()}
+                {
+                    "id": str(a.id),
+                    "severity": a.severity,
+                    "message": a.message,
+                    "created_at": a.created_at.isoformat(),
+                }
                 for a in recent_alerts[:5]
             ],
             last_updated=datetime.now(timezone.utc),
@@ -160,13 +166,16 @@ async def asset_report(
     except HTTPException:
         raise
     except Exception as exc:
-        log.exception("Error generating asset report for asset=%s tenant=%s: %s", asset_id, tenant_id, exc)
+        log.exception(
+            "Error generating asset report for asset=%s tenant=%s: %s", asset_id, tenant_id, exc
+        )
         return _demo_asset_summary(tenant_id, asset_id)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # GET /reports/{tenant_id}/trends
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 @router.get(
     "/{tenant_id}/trends",
@@ -193,37 +202,44 @@ async def fleet_trends(
     try:
         import motor.motor_asyncio as motor
         import os
+
         mongo_url = os.getenv("MONGO_URL", "mongodb://localhost:27017")
         client = motor.AsyncIOMotorClient(mongo_url, serverSelectionTimeoutMS=1000)
         db_mongo = client["foresight"]
         collection = db_mongo["sensor_readings"]
 
         pipeline = [
-            {"$match": {
-                "tenant_id": tenant_id,
-                "metric": metric,
-                "timestamp": {"$gte": datetime.now(timezone.utc) - timedelta(days=days)},
-                **({"asset_id": asset_id} if asset_id else {}),
-            }},
-            {"$group": {
-                "_id": {"$dateToString": {"format": "%Y-%m-%d", "date": "$timestamp"}},
-                "avg_value": {"$avg": "$value"},
-                "max_value": {"$max": "$value"},
-                "min_value": {"$min": "$value"},
-                "reading_count": {"$sum": 1},
-            }},
+            {
+                "$match": {
+                    "tenant_id": tenant_id,
+                    "metric": metric,
+                    "timestamp": {"$gte": datetime.now(timezone.utc) - timedelta(days=days)},
+                    **({"asset_id": asset_id} if asset_id else {}),
+                }
+            },
+            {
+                "$group": {
+                    "_id": {"$dateToString": {"format": "%Y-%m-%d", "date": "$timestamp"}},
+                    "avg_value": {"$avg": "$value"},
+                    "max_value": {"$max": "$value"},
+                    "min_value": {"$min": "$value"},
+                    "reading_count": {"$sum": 1},
+                }
+            },
             {"$sort": {"_id": 1}},
         ]
         cursor = collection.aggregate(pipeline)
         points = []
         async for doc in cursor:
-            points.append(TrendDataPoint(
-                date=doc["_id"],
-                avg_value=round(doc["avg_value"], 4),
-                max_value=round(doc["max_value"], 4),
-                min_value=round(doc["min_value"], 4),
-                reading_count=doc["reading_count"],
-            ))
+            points.append(
+                TrendDataPoint(
+                    date=doc["_id"],
+                    avg_value=round(doc["avg_value"], 4),
+                    max_value=round(doc["max_value"], 4),
+                    min_value=round(doc["min_value"], 4),
+                    reading_count=doc["reading_count"],
+                )
+            )
         if points:
             return TrendResponse(tenant_id=tenant_id, metric=metric, days=days, data_points=points)
     except Exception:
@@ -235,6 +251,7 @@ async def fleet_trends(
 # ─────────────────────────────────────────────────────────────────────────────
 # GET /reports/{tenant_id}/cost-avoidance
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 @router.get(
     "/{tenant_id}/cost-avoidance",
@@ -274,7 +291,8 @@ async def cost_avoidance(
     except Exception as exc:
         log.warning("Cost avoidance DB query failed, using demo: %s", exc)
         return _build_cost_avoidance_report(
-            tenant_id, year,
+            tenant_id,
+            year,
             {"critical": 8, "high": 23, "medium": 47, "low": 91},
         )
 
@@ -282,6 +300,7 @@ async def cost_avoidance(
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def _compute_fleet_health(total_assets: int, alert_counts: dict) -> float:
     if total_assets == 0:
@@ -306,8 +325,7 @@ def _build_cost_avoidance_report(
         for sev, count in resolved_by_severity.items()
     )
     total_planned = sum(
-        planned_cost.get(sev, 0) * count
-        for sev, count in resolved_by_severity.items()
+        planned_cost.get(sev, 0) * count for sev, count in resolved_by_severity.items()
     )
     events_total = sum(resolved_by_severity.values())
 
@@ -356,18 +374,22 @@ def _demo_asset_summary(tenant_id: str, asset_id: str) -> AssetHealthSummary:
 
 def _demo_trends(tenant_id: str, metric: str, days: int) -> TrendResponse:
     random.seed(42)
-    base_value = {"vibration_rms": 3.5, "bearing_temp_celsius": 65.0, "oil_pressure_bar": 4.2}.get(metric, 5.0)
+    base_value = {"vibration_rms": 3.5, "bearing_temp_celsius": 65.0, "oil_pressure_bar": 4.2}.get(
+        metric, 5.0
+    )
     points = []
     for i in range(days):
         dt = datetime.now(timezone.utc) - timedelta(days=days - i)
         noise = random.gauss(0, base_value * 0.05)
         trend = i * (base_value * 0.001)  # slight upward drift
         val = round(base_value + noise + trend, 4)
-        points.append(TrendDataPoint(
-            date=dt.strftime("%Y-%m-%d"),
-            avg_value=val,
-            max_value=round(val * 1.1, 4),
-            min_value=round(val * 0.9, 4),
-            reading_count=random.randint(800, 1200),
-        ))
+        points.append(
+            TrendDataPoint(
+                date=dt.strftime("%Y-%m-%d"),
+                avg_value=val,
+                max_value=round(val * 1.1, 4),
+                min_value=round(val * 0.9, 4),
+                reading_count=random.randint(800, 1200),
+            )
+        )
     return TrendResponse(tenant_id=tenant_id, metric=metric, days=days, data_points=points)

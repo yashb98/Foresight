@@ -97,7 +97,7 @@ class AlertEngine:
             tenant_id = row["tenant_id"]
             asset_id = row["asset_id"]
             metric_name = row["metric_name"]
-            max_value = row["max_value"]   # use max_value for breach detection (worst reading)
+            max_value = row["max_value"]  # use max_value for breach detection (worst reading)
 
             tenant_rules = self._rules.get_rules_for_tenant(tenant_id)
 
@@ -237,19 +237,22 @@ class AlertEngine:
             """)
 
             with engine.begin() as conn:
-                conn.execute(insert_sql, {
-                    "alert_id": alert.alert_id,
-                    "asset_id": alert.asset_id,
-                    "tenant_id": alert.tenant_id,
-                    "rule_id": alert.rule_id,
-                    "alert_type": alert.alert_type,
-                    "metric_name": alert.metric_name,
-                    "actual_value": float(alert.actual_value),
-                    "threshold_value": float(alert.threshold_value),
-                    "severity": alert.severity.value,
-                    "status": alert.status.value,
-                    "triggered_at": alert.triggered_at,
-                })
+                conn.execute(
+                    insert_sql,
+                    {
+                        "alert_id": alert.alert_id,
+                        "asset_id": alert.asset_id,
+                        "tenant_id": alert.tenant_id,
+                        "rule_id": alert.rule_id,
+                        "alert_type": alert.alert_type,
+                        "metric_name": alert.metric_name,
+                        "actual_value": float(alert.actual_value),
+                        "threshold_value": float(alert.threshold_value),
+                        "severity": alert.severity.value,
+                        "status": alert.status.value,
+                        "triggered_at": alert.triggered_at,
+                    },
+                )
             engine.dispose()
         except Exception as exc:
             log.error("Failed to write alert to PostgreSQL: %s", exc)

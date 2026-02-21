@@ -21,7 +21,7 @@ import uuid
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.dependencies import TenantContext, get_current_tenant, get_db, verify_tenant_access
@@ -34,6 +34,7 @@ router = APIRouter()
 # ─────────────────────────────────────────────────────────────────────────────
 # GET /rules/{tenant_id}
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 @router.get(
     "/{tenant_id}",
@@ -56,10 +57,8 @@ async def list_rules(
 
     try:
         from infrastructure.db.base import AlertRule
-        stmt = (
-            select(AlertRule)
-            .where(AlertRule.tenant_id == tenant_id)
-        )
+
+        stmt = select(AlertRule).where(AlertRule.tenant_id == tenant_id)
         if is_active is not None:
             stmt = stmt.where(AlertRule.is_active == is_active)
         if asset_type:
@@ -95,6 +94,7 @@ async def list_rules(
 # GET /rules/{tenant_id}/{rule_id}
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 @router.get(
     "/{tenant_id}/{rule_id}",
     response_model=AlertRuleResponse,
@@ -110,10 +110,9 @@ async def get_rule(
 
     try:
         from infrastructure.db.base import AlertRule
+
         stmt = (
-            select(AlertRule)
-            .where(AlertRule.tenant_id == tenant_id)
-            .where(AlertRule.id == rule_id)
+            select(AlertRule).where(AlertRule.tenant_id == tenant_id).where(AlertRule.id == rule_id)
         )
         result = await db.execute(stmt)
         rule = result.scalar_one_or_none()
@@ -144,6 +143,7 @@ async def get_rule(
 # POST /rules/{tenant_id}
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 @router.post(
     "/{tenant_id}",
     response_model=AlertRuleResponse,
@@ -164,6 +164,7 @@ async def create_rule(
 
     try:
         from infrastructure.db.base import AlertRule
+
         rule = AlertRule(
             id=uuid.uuid4(),
             tenant_id=tenant_id,
@@ -203,6 +204,7 @@ async def create_rule(
 # PUT /rules/{tenant_id}/{rule_id}
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 @router.put(
     "/{tenant_id}/{rule_id}",
     response_model=AlertRuleResponse,
@@ -219,10 +221,9 @@ async def update_rule(
 
     try:
         from infrastructure.db.base import AlertRule
+
         stmt = (
-            select(AlertRule)
-            .where(AlertRule.tenant_id == tenant_id)
-            .where(AlertRule.id == rule_id)
+            select(AlertRule).where(AlertRule.tenant_id == tenant_id).where(AlertRule.id == rule_id)
         )
         result = await db.execute(stmt)
         rule = result.scalar_one_or_none()
@@ -235,7 +236,9 @@ async def update_rule(
 
         await db.commit()
         await db.refresh(rule)
-        log.info("Updated alert rule id=%s tenant=%s fields=%s", rule_id, tenant_id, list(update_data))
+        log.info(
+            "Updated alert rule id=%s tenant=%s fields=%s", rule_id, tenant_id, list(update_data)
+        )
 
         return AlertRuleResponse(
             id=str(rule.id),
@@ -261,6 +264,7 @@ async def update_rule(
 # DELETE /rules/{tenant_id}/{rule_id}  (soft delete)
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 @router.delete(
     "/{tenant_id}/{rule_id}",
     status_code=status.HTTP_204_NO_CONTENT,
@@ -281,10 +285,9 @@ async def delete_rule(
 
     try:
         from infrastructure.db.base import AlertRule
+
         stmt = (
-            select(AlertRule)
-            .where(AlertRule.tenant_id == tenant_id)
-            .where(AlertRule.id == rule_id)
+            select(AlertRule).where(AlertRule.tenant_id == tenant_id).where(AlertRule.id == rule_id)
         )
         result = await db.execute(stmt)
         rule = result.scalar_one_or_none()
@@ -305,8 +308,10 @@ async def delete_rule(
 # Demo data fallback
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def _demo_rules(tenant_id: str) -> List[AlertRuleResponse]:
     from datetime import datetime, timezone
+
     return [
         AlertRuleResponse(
             id="rule-001",

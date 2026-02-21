@@ -43,7 +43,7 @@ load_dotenv()
 from kafka import KafkaProducer
 
 from common.logging_config import configure_logging
-from common.models import AssetSuiteRecord, SourceSystem
+from common.models import AssetSuiteRecord, SourceSystem  # noqa: F401
 from ingestion.minio_writer import MinIOWriter
 
 log = logging.getLogger(__name__)
@@ -66,12 +66,12 @@ AS9_FAILURE_CODES = [
     "MECH-001",  # Mechanical failure
     "ELEC-002",  # Electrical fault
     "WEAR-003",  # Wear and tear
-    "CORRO-004", # Corrosion
+    "CORRO-004",  # Corrosion
     "LEAK-005",  # Fluid leak
     "VIBE-006",  # Excessive vibration
     "TEMP-007",  # Thermal overload
-    "ALIGN-008", # Misalignment
-    "BLOCK-009", # Blockage
+    "ALIGN-008",  # Misalignment
+    "BLOCK-009",  # Blockage
     "CAVI-010",  # Cavitation
 ]
 AS9_WORK_TYPES = ["CORRECTIVE", "PREVENTIVE", "PREDICTIVE", "INSPECTION", "SHUTDOWN"]
@@ -105,15 +105,15 @@ def generate_asset_register_record(
     site = random.choice(AS9_SITE_CODES)
     asset_class = AS9_ASSET_CLASSES.get(asset_type, "GENERAL/EQUIPMENT")
     # Different naming convention than SAP (deliberate discrepancy)
-    as9_asset_id = f"{site}/BLDG-{random.randint(1,5)}/{asset_type.upper()}-{asset_index:03d}"
+    as9_asset_id = f"{site}/BLDG-{random.randint(1, 5)}/{asset_type.upper()}-{asset_index:03d}"
 
     return {
         # Asset Suite 9 fields
-        "assetId": as9_asset_id,          # AS9 hierarchical path ID
+        "assetId": as9_asset_id,  # AS9 hierarchical path ID
         "assetNumber": f"AS9-{random.randint(10000, 99999)}",
         "assetName": f"{asset_type.capitalize()} {asset_index:03d} — {site}",
         "assetClass": asset_class,
-        "parentId": f"{site}/BLDG-{random.randint(1,5)}",
+        "parentId": f"{site}/BLDG-{random.randint(1, 5)}",
         "locationCode": f"{site}-LOC-{random.randint(100, 999)}",
         "criticalityRating": random.choice(["A", "B", "C", "D"]),  # AS9 uses letters, not words
         "installDate": install_date.strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -121,15 +121,17 @@ def generate_asset_register_record(
         "manufacturer": random.choice(["Siemens", "GE Power", "ABB Ltd", "Flowserve", "Sulzer"]),
         "modelNumber": f"AS-MDL-{random.randint(1000, 9999)}",
         "serialNumber": f"AS9SN{random.randint(100000, 999999)}",
-        "maintenanceStrategy": random.choice(["TBM", "CBM", "RCM"]),  # Time/Condition/Reliability-based
+        "maintenanceStrategy": random.choice(
+            ["TBM", "CBM", "RCM"]
+        ),  # Time/Condition/Reliability-based
         "operatingHours": random.randint(5000, 80000),
         "costAccount": f"CA-{random.randint(1000, 9999)}",
-        "lastInspectionDate": (datetime.now(tz=timezone.utc) - timedelta(
-            days=random.randint(10, 120)
-        )).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "nextScheduledMaintenance": (datetime.now(tz=timezone.utc) + timedelta(
-            days=random.randint(7, 90)
-        )).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "lastInspectionDate": (
+            datetime.now(tz=timezone.utc) - timedelta(days=random.randint(10, 120))
+        ).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "nextScheduledMaintenance": (
+            datetime.now(tz=timezone.utc) + timedelta(days=random.randint(7, 90))
+        ).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "riskScore": round(random.uniform(1.0, 10.0), 1),
         "failureCodes": random.sample(AS9_FAILURE_CODES, k=random.randint(0, 3)),
         # FORESIGHT metadata
@@ -170,33 +172,37 @@ def generate_work_management_records(
         work_type = random.choice(AS9_WORK_TYPES)
         priority = random.choice(AS9_PRIORITIES)
 
-        records.append({
-            "workOrderId": f"AS9-WO-{random.randint(100000, 999999)}",
-            "assetId": as9_asset_id,
-            "workType": work_type,
-            "priority": priority,
-            "description": _work_description(work_type),
-            "reportedDate": work_date.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "plannedStartDate": work_date.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "completionDate": (work_date + timedelta(hours=random.randint(1, 48))).strftime(
-                "%Y-%m-%dT%H:%M:%SZ"
-            ),
-            "status": random.choice(AS9_STATUSES),
-            "technicianCode": f"TECH-{random.randint(100, 999)}",
-            "laborHours": round(random.uniform(0.5, 24.0), 1),
-            # AS9 records costs slightly differently (e.g. excludes overhead)
-            "materialCost": round(random.uniform(50, 5000), 2),
-            "laborCost": round(random.uniform(100, 3000), 2),
-            "totalCost": round(random.uniform(200, 8000), 2),  # may not match SAP exactly
-            "failureCode": random.choice(AS9_FAILURE_CODES) if work_type == "CORRECTIVE" else None,
-            "rootCause": _root_cause_text() if work_type == "CORRECTIVE" else None,
-            "outcome": random.choice(["COMPLETED", "DEFERRED", "PARTIAL", "COMPLETED"]),
-            "remarks": f"AS9 work record {i+1} for {work_type.lower()} maintenance",
-            # FORESIGHT metadata
-            "_foresight_asset_id": foresight_asset_id,
-            "_foresight_tenant_id": tenant_id,
-            "_foresight_extracted_at": datetime.now(tz=timezone.utc).isoformat(),
-        })
+        records.append(
+            {
+                "workOrderId": f"AS9-WO-{random.randint(100000, 999999)}",
+                "assetId": as9_asset_id,
+                "workType": work_type,
+                "priority": priority,
+                "description": _work_description(work_type),
+                "reportedDate": work_date.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "plannedStartDate": work_date.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "completionDate": (work_date + timedelta(hours=random.randint(1, 48))).strftime(
+                    "%Y-%m-%dT%H:%M:%SZ"
+                ),
+                "status": random.choice(AS9_STATUSES),
+                "technicianCode": f"TECH-{random.randint(100, 999)}",
+                "laborHours": round(random.uniform(0.5, 24.0), 1),
+                # AS9 records costs slightly differently (e.g. excludes overhead)
+                "materialCost": round(random.uniform(50, 5000), 2),
+                "laborCost": round(random.uniform(100, 3000), 2),
+                "totalCost": round(random.uniform(200, 8000), 2),  # may not match SAP exactly
+                "failureCode": (
+                    random.choice(AS9_FAILURE_CODES) if work_type == "CORRECTIVE" else None
+                ),
+                "rootCause": _root_cause_text() if work_type == "CORRECTIVE" else None,
+                "outcome": random.choice(["COMPLETED", "DEFERRED", "PARTIAL", "COMPLETED"]),
+                "remarks": f"AS9 work record {i+1} for {work_type.lower()} maintenance",
+                # FORESIGHT metadata
+                "_foresight_asset_id": foresight_asset_id,
+                "_foresight_tenant_id": tenant_id,
+                "_foresight_extracted_at": datetime.now(tz=timezone.utc).isoformat(),
+            }
+        )
     return records
 
 
@@ -227,46 +233,57 @@ def generate_maintenance_schedule(
         days_ahead = random.randint(7, months_ahead * 30)
         planned_date = now + timedelta(days=days_ahead)
 
-        schedule.append({
-            "scheduleId": f"SCH-{random.randint(10000, 99999)}",
-            "assetId": as9_asset_id,
-            "workType": random.choice(["PREVENTIVE", "INSPECTION"]),
-            "plannedDate": planned_date.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "estimatedDuration": f"{random.randint(2, 12)}h",
-            "estimatedCost": round(random.uniform(500, 5000), 2),
-            "maintenanceStrategy": random.choice(["TBM", "CBM"]),
-            "taskDescription": random.choice([
-                "Quarterly preventive maintenance",
-                "Annual overhaul inspection",
-                "6-monthly lubrication service",
-                "Bi-annual calibration check",
-                "Monthly condition monitoring",
-            ]),
-            "requiredParts": [
-                f"PART-{random.randint(1000, 9999)}"
-                for _ in range(random.randint(0, 3))
-            ],
-            # FORESIGHT metadata
-            "_foresight_asset_id": foresight_asset_id,
-            "_foresight_tenant_id": tenant_id,
-            "_foresight_extracted_at": now.isoformat(),
-        })
+        schedule.append(
+            {
+                "scheduleId": f"SCH-{random.randint(10000, 99999)}",
+                "assetId": as9_asset_id,
+                "workType": random.choice(["PREVENTIVE", "INSPECTION"]),
+                "plannedDate": planned_date.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "estimatedDuration": f"{random.randint(2, 12)}h",
+                "estimatedCost": round(random.uniform(500, 5000), 2),
+                "maintenanceStrategy": random.choice(["TBM", "CBM"]),
+                "taskDescription": random.choice(
+                    [
+                        "Quarterly preventive maintenance",
+                        "Annual overhaul inspection",
+                        "6-monthly lubrication service",
+                        "Bi-annual calibration check",
+                        "Monthly condition monitoring",
+                    ]
+                ),
+                "requiredParts": [
+                    f"PART-{random.randint(1000, 9999)}" for _ in range(random.randint(0, 3))
+                ],
+                # FORESIGHT metadata
+                "_foresight_asset_id": foresight_asset_id,
+                "_foresight_tenant_id": tenant_id,
+                "_foresight_extracted_at": now.isoformat(),
+            }
+        )
     return schedule
 
 
 def _work_description(work_type: str) -> str:
     """Generate work description text for a given work type."""
     descriptions = {
-        "CORRECTIVE": random.choice([
-            "Emergency repair — bearing failure", "Corrective action — seal leak",
-            "Unplanned replacement — impeller damage",
-        ]),
-        "PREVENTIVE": random.choice([
-            "Scheduled PM service", "Quarterly preventive check",
-            "Annual overhaul as per maintenance strategy",
-        ]),
+        "CORRECTIVE": random.choice(
+            [
+                "Emergency repair — bearing failure",
+                "Corrective action — seal leak",
+                "Unplanned replacement — impeller damage",
+            ]
+        ),
+        "PREVENTIVE": random.choice(
+            [
+                "Scheduled PM service",
+                "Quarterly preventive check",
+                "Annual overhaul as per maintenance strategy",
+            ]
+        ),
         "PREDICTIVE": "Predictive maintenance follow-up based on CBM data",
-        "INSPECTION": random.choice(["Visual inspection", "NDE inspection", "Condition assessment"]),
+        "INSPECTION": random.choice(
+            ["Visual inspection", "NDE inspection", "Condition assessment"]
+        ),
         "SHUTDOWN": "Major planned shutdown maintenance",
     }
     return descriptions.get(work_type, "General maintenance task")
@@ -274,20 +291,23 @@ def _work_description(work_type: str) -> str:
 
 def _root_cause_text() -> str:
     """Generate a root cause analysis text."""
-    return random.choice([
-        "Normal wear and tear — end of design life",
-        "Lack of lubrication — maintenance interval exceeded",
-        "Process upset — cavitation induced damage",
-        "Corrosive environment — material incompatibility",
-        "Operator error — incorrect parameter settings",
-        "Voltage transient — electrical surge damage",
-        "Contamination ingress — filter bypass",
-    ])
+    return random.choice(
+        [
+            "Normal wear and tear — end of design life",
+            "Lack of lubrication — maintenance interval exceeded",
+            "Process upset — cavitation induced damage",
+            "Corrosive environment — material incompatibility",
+            "Operator error — incorrect parameter settings",
+            "Voltage transient — electrical surge damage",
+            "Contamination ingress — filter bypass",
+        ]
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Asset Suite 9 Connector class
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class AssetSuiteConnector:
     """
@@ -307,16 +327,12 @@ class AssetSuiteConnector:
     ) -> None:
         self.tenant_id = tenant_id
         self.mode = mode
-        self._bootstrap = kafka_bootstrap or os.getenv(
-            "KAFKA_BOOTSTRAP_SERVERS", "kafka:9092"
-        )
+        self._bootstrap = kafka_bootstrap or os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
         self._topic = os.getenv("KAFKA_TOPIC_MAINTENANCE", "maintenance-events")
         self._producer: Optional[KafkaProducer] = None
         self._minio: Optional[MinIOWriter] = None
 
-        log.info(
-            "AssetSuiteConnector initialised [mode=%s, tenant=%s]", mode, tenant_id
-        )
+        log.info("AssetSuiteConnector initialised [mode=%s, tenant=%s]", mode, tenant_id)
 
     def _get_producer(self) -> KafkaProducer:
         """Lazily initialise Kafka producer."""

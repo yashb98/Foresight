@@ -17,7 +17,7 @@ import logging
 import os
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Dict, List, Optional
 
@@ -30,9 +30,9 @@ class CachedRule:
 
     rule_id: str
     tenant_id: str
-    asset_type: Optional[str]   # None = applies to all asset types
+    asset_type: Optional[str]  # None = applies to all asset types
     metric_name: str
-    operator: str               # gt | lt | gte | lte | eq
+    operator: str  # gt | lt | gte | lte | eq
     threshold_value: float
     severity: str
     active: bool
@@ -73,7 +73,7 @@ class RulesLoader:
     ) -> None:
         self._db_url = db_url or os.getenv("DATABASE_URL_SYNC")
         self._refresh_interval = refresh_interval_seconds
-        self._rules: Dict[str, List[CachedRule]] = {}   # tenant_id → rules
+        self._rules: Dict[str, List[CachedRule]] = {}  # tenant_id → rules
         self._lock = threading.RLock()
         self._last_loaded: Optional[datetime] = None
         self._load_error_count: int = 0
@@ -162,8 +162,7 @@ class RulesLoader:
         except Exception as exc:
             self._load_error_count += 1
             log.error(
-                "Failed to load rules from PostgreSQL (error #%d): %s — "
-                "keeping previous cache",
+                "Failed to load rules from PostgreSQL (error #%d): %s — " "keeping previous cache",
                 self._load_error_count,
                 exc,
             )
@@ -179,9 +178,7 @@ class RulesLoader:
 
         thread = threading.Thread(target=_refresh_loop, daemon=True, name="rules-refresher")
         thread.start()
-        log.info(
-            "Rules refresh thread started: interval=%ds", self._refresh_interval
-        )
+        log.info("Rules refresh thread started: interval=%ds", self._refresh_interval)
 
     @property
     def last_loaded(self) -> Optional[datetime]:

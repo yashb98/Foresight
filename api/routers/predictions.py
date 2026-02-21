@@ -1,10 +1,10 @@
 """FORESIGHT — /predict router."""
+
 from __future__ import annotations
 
 import logging
 import uuid
 from datetime import date
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import text
@@ -96,9 +96,7 @@ async def predict(
     return PredictionResponse.from_prediction_result(result_obj)
 
 
-async def _load_features_for_asset(
-    db: AsyncSession, asset_id: str, tenant_id: str
-) -> dict:
+async def _load_features_for_asset(db: AsyncSession, asset_id: str, tenant_id: str) -> dict:
     """
     Load the latest feature vector for an asset from the feature store (PostgreSQL cache).
 
@@ -115,7 +113,7 @@ async def _load_features_for_asset(
         text("""
             SELECT hs.top_features_json,
                    EXTRACT(EPOCH FROM (NOW() - mr.last_maint)) / 86400 AS days_since_maint,
-                   EXTRACT(EPOCH FROM (NOW() - a.installed_date::timestamp)) / 86400 AS days_since_install
+                   EXTRACT(EPOCH FROM (NOW() - a.installed_date::timestamp)) / 86400 AS days_since_install  # noqa: E501
             FROM assets a
             LEFT JOIN (
                 SELECT asset_id, MAX(performed_at) AS last_maint

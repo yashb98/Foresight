@@ -1,10 +1,11 @@
 """FORESIGHT — /assets router."""
+
 from __future__ import annotations
 
 import logging
-from typing import List, Optional
+from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -43,7 +44,9 @@ async def list_assets(
     tenant_id: str,
     asset_type: Optional[str] = Query(None, description="Filter by asset type"),
     criticality: Optional[str] = Query(None, description="Filter by criticality level"),
-    risk_level: Optional[str] = Query(None, description="Filter by risk level: low|medium|high|critical"),
+    risk_level: Optional[str] = Query(
+        None, description="Filter by risk level: low|medium|high|critical"
+    ),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     current_tenant: TenantContext = Depends(get_current_tenant),
@@ -132,13 +135,17 @@ async def list_assets(
                 installed_date=row[6],
                 source_system=row[7],
                 is_active=row[8],
-                current_health=HealthScoreSummary(
-                    health_score=float(row[9]) if row[9] is not None else None,
-                    failure_prob_7d=float(row[10]) if row[10] is not None else None,
-                    failure_prob_30d=prob_30d,
-                    score_date=row[12],
-                    risk_level=rl,
-                ) if row[9] is not None else None,
+                current_health=(
+                    HealthScoreSummary(
+                        health_score=float(row[9]) if row[9] is not None else None,
+                        failure_prob_7d=float(row[10]) if row[10] is not None else None,
+                        failure_prob_30d=prob_30d,
+                        score_date=row[12],
+                        risk_level=rl,
+                    )
+                    if row[9] is not None
+                    else None
+                ),
             )
         )
 
@@ -246,13 +253,17 @@ async def get_asset_detail(
         installed_date=asset_row[6],
         source_system=asset_row[7],
         is_active=asset_row[8],
-        current_health=HealthScoreSummary(
-            health_score=latest.health_score if latest else None,
-            failure_prob_7d=latest.failure_prob_7d if latest else None,
-            failure_prob_30d=prob_30d,
-            score_date=latest.score_date if latest else None,
-            risk_level=_risk_level(prob_30d),
-        ) if latest else None,
+        current_health=(
+            HealthScoreSummary(
+                health_score=latest.health_score if latest else None,
+                failure_prob_7d=latest.failure_prob_7d if latest else None,
+                failure_prob_30d=prob_30d,
+                score_date=latest.score_date if latest else None,
+                risk_level=_risk_level(prob_30d),
+            )
+            if latest
+            else None
+        ),
         prediction_history=history,
         recent_alerts_count=int(alert_count),
         last_maintenance_date=maint_row[0] if maint_row else None,

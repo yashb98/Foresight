@@ -8,11 +8,10 @@ Pydantic BaseSettings validates types and raises clear errors for missing vars.
 
 from __future__ import annotations
 
-import os
 from functools import lru_cache
 from typing import List
 
-from pydantic import AnyUrl, field_validator
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 

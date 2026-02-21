@@ -52,17 +52,19 @@ log = logging.getLogger(__name__)
 # Spark schema for sensor readings (mirrors common.models.SensorReading)
 # ─────────────────────────────────────────────────────────────────────────────
 
-SENSOR_READING_SCHEMA = T.StructType([
-    T.StructField("reading_id", T.StringType(), True),
-    T.StructField("tenant_id", T.StringType(), False),
-    T.StructField("asset_id", T.StringType(), False),
-    T.StructField("timestamp", T.StringType(), True),   # parsed to TimestampType below
-    T.StructField("metric_name", T.StringType(), False),
-    T.StructField("value", T.DoubleType(), False),
-    T.StructField("unit", T.StringType(), True),
-    T.StructField("quality_flag", T.StringType(), True),
-    T.StructField("source", T.StringType(), True),
-])
+SENSOR_READING_SCHEMA = T.StructType(
+    [
+        T.StructField("reading_id", T.StringType(), True),
+        T.StructField("tenant_id", T.StringType(), False),
+        T.StructField("asset_id", T.StringType(), False),
+        T.StructField("timestamp", T.StringType(), True),  # parsed to TimestampType below
+        T.StructField("metric_name", T.StringType(), False),
+        T.StructField("value", T.DoubleType(), False),
+        T.StructField("unit", T.StringType(), True),
+        T.StructField("quality_flag", T.StringType(), True),
+        T.StructField("source", T.StringType(), True),
+    ]
+)
 
 
 def create_spark_session() -> SparkSession:
@@ -72,7 +74,7 @@ def create_spark_session() -> SparkSession:
     Returns:
         Active SparkSession.
     """
-    kafka_bootstrap = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
+    kafka_bootstrap = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")  # noqa: F841
     mongo_uri = os.getenv("MONGO_URI", "mongodb://root:password@mongodb:27017/foresight")
     minio_endpoint = os.getenv("AWS_ENDPOINT_URL", "http://minio:9000")
     spark_master = os.getenv("SPARK_MASTER_URL", "local[*]")
@@ -83,11 +85,13 @@ def create_spark_session() -> SparkSession:
         # Kafka connector
         .config(
             "spark.jars.packages",
-            ",".join([
-                "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0",
-                "org.mongodb.spark:mongo-spark-connector_2.12:10.2.1",
-                "org.apache.hadoop:hadoop-aws:3.3.4",
-            ]),
+            ",".join(
+                [
+                    "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0",
+                    "org.mongodb.spark:mongo-spark-connector_2.12:10.2.1",
+                    "org.apache.hadoop:hadoop-aws:3.3.4",
+                ]
+            ),
         )
         # MongoDB connection
         .config("spark.mongodb.write.connection.uri", mongo_uri)
@@ -160,8 +164,7 @@ def parse_sensor_readings(raw_df: DataFrame) -> tuple[DataFrame, DataFrame]:
 
     # Cast string timestamp to proper TimestampType
     valid_df = (
-        parsed
-        .filter(F.col("data").isNotNull())
+        parsed.filter(F.col("data").isNotNull())
         .filter(F.col("data.tenant_id").isNotNull())
         .filter(F.col("data.asset_id").isNotNull())
         .select(
@@ -180,14 +183,10 @@ def parse_sensor_readings(raw_df: DataFrame) -> tuple[DataFrame, DataFrame]:
     )
 
     # Dead-letter: records that failed parsing
-    dead_letter_df = (
-        parsed
-        .filter(F.col("data").isNull())
-        .select(
-            F.col("offset"),
-            F.col("kafka_timestamp"),
-            F.col("partition"),
-        )
+    dead_letter_df = parsed.filter(F.col("data").isNull()).select(
+        F.col("offset"),
+        F.col("kafka_timestamp"),
+        F.col("partition"),
     )
 
     return valid_df, dead_letter_df
@@ -241,11 +240,11 @@ def run_streaming_pipeline() -> None:
     agg_5min, agg_1hr, agg_24hr = apply_windowed_aggregations(valid_df)
 
     # Write 5-minute aggregations to MongoDB (primary time-series store)
-    mongo_query_5min = mongo_sink.write_stream(agg_5min, window_size="5min")
-    mongo_query_1hr = mongo_sink.write_stream(agg_1hr, window_size="1hour")
+    mongo_query_5min = mongo_sink.write_stream(agg_5min, window_size="5min")  # noqa: F841
+    mongo_query_1hr = mongo_sink.write_stream(agg_1hr, window_size="1hour")  # noqa: F841
 
     # Alert evaluation on 5-minute window (fastest detection)
-    alert_query = alert_engine.evaluate_stream(agg_5min)
+    alert_query = alert_engine.evaluate_stream(agg_5min)  # noqa: F841
 
     log.info("All streaming queries started. Waiting for termination...")
     spark.streams.awaitAnyTermination()

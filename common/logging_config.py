@@ -13,7 +13,8 @@ import sys
 from typing import Any, Dict
 
 try:
-    import structlog  # optional enhanced structured logging
+    import structlog  # noqa: F401 — optional enhanced structured logging
+
     HAS_STRUCTLOG = True
 except ImportError:
     HAS_STRUCTLOG = False
@@ -28,7 +29,7 @@ class JSONFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         """Serialise log record to JSON string."""
         import json
-        import traceback
+        import traceback  # noqa: F401
 
         log_obj: Dict[str, Any] = {
             "timestamp": self.formatTime(record, self.datefmt),
@@ -42,10 +43,27 @@ class JSONFormatter(logging.Formatter):
 
         # Include extra fields injected via logger.info("msg", extra={...})
         extra_keys = set(record.__dict__.keys()) - {
-            "name", "msg", "args", "levelname", "levelno", "pathname",
-            "filename", "module", "exc_info", "exc_text", "stack_info",
-            "lineno", "funcName", "created", "msecs", "relativeCreated",
-            "thread", "threadName", "processName", "process", "message",
+            "name",
+            "msg",
+            "args",
+            "levelname",
+            "levelno",
+            "pathname",
+            "filename",
+            "module",
+            "exc_info",
+            "exc_text",
+            "stack_info",
+            "lineno",
+            "funcName",
+            "created",
+            "msecs",
+            "relativeCreated",
+            "thread",
+            "threadName",
+            "processName",
+            "process",
+            "message",
         }
         for key in extra_keys:
             log_obj[key] = getattr(record, key)

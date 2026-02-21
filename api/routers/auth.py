@@ -1,4 +1,5 @@
 """FORESIGHT — /auth router — JWT token issuance."""
+
 from __future__ import annotations
 
 import logging
@@ -72,7 +73,9 @@ async def login(
         HTTPException 401: Invalid credentials.
     """
     result = await db.execute(
-        text("SELECT tenant_id, client_secret_hash FROM tenants WHERE client_id = :cid AND is_active = true"),
+        text(
+            "SELECT tenant_id, client_secret_hash FROM tenants WHERE client_id = :cid AND is_active = true"  # noqa: E501
+        ),
         {"cid": request.client_id},
     )
     row = result.fetchone()

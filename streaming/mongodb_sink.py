@@ -39,9 +39,7 @@ class MongoDBSink:
         self._mongo_uri = mongo_uri or os.getenv("MONGO_URI")
         self._database = database or os.getenv("MONGO_DB", "foresight")
         self._collection = collection
-        log.info(
-            "MongoDBSink initialised: %s.%s", self._database, self._collection
-        )
+        log.info("MongoDBSink initialised: %s.%s", self._database, self._collection)
 
     def write_stream(
         self,
@@ -62,9 +60,7 @@ class MongoDBSink:
         Returns:
             Active StreamingQuery.
         """
-        checkpoint_path = (
-            f"/tmp/spark-checkpoints/mongodb-{window_size}{checkpoint_suffix}"
-        )
+        checkpoint_path = f"/tmp/spark-checkpoints/mongodb-{window_size}{checkpoint_suffix}"
 
         return (
             agg_df.writeStream.foreachBatch(
@@ -76,9 +72,7 @@ class MongoDBSink:
             .start()
         )
 
-    def _write_batch(
-        self, batch_df: DataFrame, batch_id: int, window_size: str
-    ) -> None:
+    def _write_batch(self, batch_df: DataFrame, batch_id: int, window_size: str) -> None:
         """
         Write a single micro-batch to MongoDB as upserts.
 

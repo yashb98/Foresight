@@ -1,11 +1,12 @@
 """FORESIGHT — /alerts router."""
+
 from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,8 +24,12 @@ router = APIRouter()
 )
 async def list_alerts(
     tenant_id: str,
-    severity: Optional[str] = Query(None, description="Filter by severity: low|medium|high|critical"),
-    alert_status: Optional[str] = Query(None, alias="status", description="Filter by status: active|acknowledged|resolved"),
+    severity: Optional[str] = Query(
+        None, description="Filter by severity: low|medium|high|critical"
+    ),
+    alert_status: Optional[str] = Query(
+        None, alias="status", description="Filter by status: active|acknowledged|resolved"
+    ),
     limit: int = Query(100, ge=1, le=500),
     current_tenant: TenantContext = Depends(get_current_tenant),
     db: AsyncSession = Depends(get_db),
@@ -83,13 +88,21 @@ async def list_alerts(
 
     alerts = [
         AlertResponse(
-            alert_id=str(row[0]), asset_id=str(row[1]), tenant_id=str(row[2]),
-            rule_id=str(row[3]) if row[3] else None, alert_type=row[4],
-            metric_name=row[5], actual_value=float(row[6]) if row[6] else None,
+            alert_id=str(row[0]),
+            asset_id=str(row[1]),
+            tenant_id=str(row[2]),
+            rule_id=str(row[3]) if row[3] else None,
+            alert_type=row[4],
+            metric_name=row[5],
+            actual_value=float(row[6]) if row[6] else None,
             threshold_value=float(row[7]) if row[7] else None,
-            severity=row[8], status=row[9], triggered_at=row[10],
-            acknowledged_at=row[11], resolved_at=row[12],
-            acknowledged_by=row[13], notes=row[14],
+            severity=row[8],
+            status=row[9],
+            triggered_at=row[10],
+            acknowledged_at=row[11],
+            resolved_at=row[12],
+            acknowledged_by=row[13],
+            notes=row[14],
         )
         for row in rows
     ]
@@ -156,11 +169,19 @@ async def update_alert(
         raise HTTPException(status_code=404, detail=f"Alert {alert_id} not found")
 
     return AlertResponse(
-        alert_id=str(row[0]), asset_id=str(row[1]), tenant_id=str(row[2]),
-        rule_id=str(row[3]) if row[3] else None, alert_type=row[4],
-        metric_name=row[5], actual_value=float(row[6]) if row[6] else None,
+        alert_id=str(row[0]),
+        asset_id=str(row[1]),
+        tenant_id=str(row[2]),
+        rule_id=str(row[3]) if row[3] else None,
+        alert_type=row[4],
+        metric_name=row[5],
+        actual_value=float(row[6]) if row[6] else None,
         threshold_value=float(row[7]) if row[7] else None,
-        severity=row[8], status=row[9], triggered_at=row[10],
-        acknowledged_at=row[11], resolved_at=row[12],
-        acknowledged_by=row[13], notes=row[14],
+        severity=row[8],
+        status=row[9],
+        triggered_at=row[10],
+        acknowledged_at=row[11],
+        resolved_at=row[12],
+        acknowledged_by=row[13],
+        notes=row[14],
     )

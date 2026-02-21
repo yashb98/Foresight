@@ -67,6 +67,7 @@ log = logging.getLogger(__name__)
 # Asset state machine — one per simulated asset
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 @dataclass
 class AssetState:
     """
@@ -85,14 +86,14 @@ class AssetState:
     rpm: float = field(default_factory=lambda: random.uniform(1500, 2500))
 
     # Degradation state
-    degradation_level: float = 0.0   # 0.0 = healthy, 1.0 = about to fail
+    degradation_level: float = 0.0  # 0.0 = healthy, 1.0 = about to fail
     in_anomaly: bool = False
     anomaly_ticks_remaining: int = 0
 
     # OU process parameters for pressure
     pressure_mean: float = field(default_factory=lambda: random.uniform(90, 130))
-    pressure_theta: float = 0.15     # mean reversion speed
-    pressure_sigma: float = 2.5      # volatility
+    pressure_theta: float = 0.15  # mean reversion speed
+    pressure_sigma: float = 2.5  # volatility
 
     def __post_init__(self) -> None:
         self.pressure_mean = self.pressure  # initialise mean to starting value
@@ -105,8 +106,8 @@ class SimulatorConfig:
     asset_ids: List[str]
     tenant_ids: List[str]
     frequency_seconds: float
-    anomaly_probability: float = 0.005   # probability per tick of starting anomaly
-    minio_flush_every: int = 100         # write to MinIO every N readings
+    anomaly_probability: float = 0.005  # probability per tick of starting anomaly
+    minio_flush_every: int = 100  # write to MinIO every N readings
     kafka_topic: str = "sensor-readings"
     kafka_bootstrap_servers: str = "kafka:9092"
 
@@ -114,6 +115,7 @@ class SimulatorConfig:
 # ─────────────────────────────────────────────────────────────────────────────
 # Sensor physics functions
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def simulate_temperature(state: AssetState, tick: int) -> float:
     """
@@ -135,7 +137,7 @@ def simulate_temperature(state: AssetState, tick: int) -> float:
     drift = state.degradation_level * 20.0  # up to +20°C when fully degraded
 
     base = state.temperature + noise + drift * 0.01
-    base = base + daily_cycle * 0.01   # gradual daily variation
+    base = base + daily_cycle * 0.01  # gradual daily variation
 
     if state.in_anomaly:
         base += random.uniform(20, 40)  # spike above threshold (85°C threshold)
@@ -207,7 +209,7 @@ def simulate_rpm(state: AssetState) -> float:
     state.rpm = state.rpm + 0.1 * (setpoint - state.rpm) + noise
 
     if state.in_anomaly:
-        state.rpm *= 0.4   # significant RPM drop — triggers low RPM alert (<500)
+        state.rpm *= 0.4  # significant RPM drop — triggers low RPM alert (<500)
 
     state.rpm = max(0.0, min(3600.0, state.rpm))
     return round(state.rpm, 1)
@@ -238,14 +240,13 @@ def update_anomaly_state(state: AssetState, config: SimulatorConfig) -> None:
         )
 
     # Gradual degradation drift
-    state.degradation_level = min(
-        1.0, state.degradation_level + random.uniform(0, 0.0001)
-    )
+    state.degradation_level = min(1.0, state.degradation_level + random.uniform(0, 0.0001))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Kafka producer
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def create_kafka_producer(bootstrap_servers: str) -> KafkaProducer:
     """
@@ -271,23 +272,19 @@ def create_kafka_producer(bootstrap_servers: str) -> KafkaProducer:
                 max_in_flight_requests_per_connection=5,
                 compression_type="gzip",
                 batch_size=16384,
-                linger_ms=10,            # 10ms batching window
+                linger_ms=10,  # 10ms batching window
                 buffer_memory=33554432,  # 32MB buffer
             )
             log.info("Kafka producer connected: %s", bootstrap_servers)
             return producer
         except KafkaError as e:
-            log.warning(
-                "Kafka not ready (attempt %d/10): %s — retrying in 5s", attempt + 1, e
-            )
+            log.warning("Kafka not ready (attempt %d/10): %s — retrying in 5s", attempt + 1, e)
             time.sleep(5)
 
     raise RuntimeError(f"Cannot connect to Kafka at {bootstrap_servers} after 10 attempts")
 
 
-def publish_reading(
-    producer: KafkaProducer, reading: SensorReading, topic: str
-) -> None:
+def publish_reading(producer: KafkaProducer, reading: SensorReading, topic: str) -> None:
     """
     Publish a single SensorReading to Kafka.
     Key = tenant_id:asset_id for partition affinity (same asset → same partition).
