@@ -1,0 +1,121 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: foresight-api
+  namespace: foresight
+  labels:
+    app: foresight-api
+    component: api
+    version: "0.1.0"
+  annotations:
+    kubernetes.io/change-cause: "Initial deployment"
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: foresight-api
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0        # Zero-downtime deployments
+  template:
+    metadata:
+      labels:
+        app: foresight-api
+        component: api
+        version: "0.1.0"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/metrics"
+        prometheus.io/port: "8000"
+    spec:
+      serviceAccountName: foresight-api
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: api
+          image: ghcr.io/foresight/foresight-api:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+              name: http
+              protocol: TCP
+          env:
+            - name: ENVIRONMENT
+              value: "production"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: foresight-db-secret
+                  key: database-url
+            - name: MONGO_URL
+              valueFrom:
+                secretKeyRef:
+                  name: foresight-mongo-secret
+                  key: mongo-url
+            - name: JWT_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: foresight-jwt-secret
+                  key: jwt-secret-key
+            - name: JWT_ALGORITHM
+              value: "HS256"
+            - name: CORS_ORIGINS
+              valueFrom:
+                configMapKeyRef:
+                  name: foresight-api-config
+                  key: cors-origins
+            - name: MLFLOW_TRACKING_URI
+              valueFrom:
+                configMapKeyRef:
+                  name: foresight-api-config
+                  key: mlflow-tracking-uri
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "2Gi"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values: ["foresight-api"]
+                topologyKey: kubernetes.io/hostname

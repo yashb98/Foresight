@@ -236,7 +236,7 @@ services:
   # Spark Master
   # ---------------------------------------------------------------------------
   spark-master:
-    image: bitnami/spark:3.5
+    image: bitnami/spark:3.4.0
     container_name: foresight-spark-master
     hostname: spark-master
     env_file: .env
@@ -269,7 +269,7 @@ services:
   # Spark Worker 1
   # ---------------------------------------------------------------------------
   spark-worker-1:
-    image: bitnami/spark:3.5
+    image: bitnami/spark:3.4.0
     container_name: foresight-spark-worker-1
     hostname: spark-worker-1
     env_file: .env
@@ -299,7 +299,7 @@ services:
   # Spark Worker 2
   # ---------------------------------------------------------------------------
   spark-worker-2:
-    image: bitnami/spark:3.5
+    image: bitnami/spark:3.4.0
     container_name: foresight-spark-worker-2
     hostname: spark-worker-2
     env_file: .env

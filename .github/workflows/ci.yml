@@ -208,14 +208,60 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Build and push FastAPI image
         uses: docker/build-push-action@v5
         with:
-          context: ./api
+          context: .
+          file: ./api/Dockerfile
           push: true
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-api:latest
             ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-api:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Set up Node 20 for dashboard build
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: Install dashboard dependencies
+        working-directory: dashboard
+        run: npm ci --frozen-lockfile
+
+      - name: Run dashboard tests
+        working-directory: dashboard
+        run: npm test
+
+      - name: Build dashboard
+        working-directory: dashboard
+        run: npm run build
+
+      - name: Build and push dashboard image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./dashboard
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-dashboard:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-dashboard:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push streaming image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./streaming/Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-streaming:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-streaming:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -247,6 +293,14 @@ jobs:
         run: |
           python tests/smoke_test.py --base-url "$STAGING_API_URL"
 
+      - name: Run load test against staging (k6)
+        uses: grafana/k6-action@v0.3.1
+        with:
+          filename: tests/load/load_test.js
+        env:
+          K6_API_URL: ${{ secrets.STAGING_API_URL }}
+          K6_STAGING_TOKEN: ${{ secrets.STAGING_TEST_TOKEN }}
+
   # ---------------------------------------------------------------------------
   # Job 6: Deploy to production (on release tag)
   # ---------------------------------------------------------------------------
@@ -264,10 +318,26 @@ jobs:
           echo "${{ secrets.KUBECONFIG_PROD }}" | base64 -d > kubeconfig.yaml
           export KUBECONFIG=kubeconfig.yaml
 
-      - name: Deploy to production namespace
+      - name: Set up Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: "3.14.0"
+
+      - name: Deploy to production via Helm
         run: |
-          kubectl apply -f infrastructure/kubernetes/manifests/ -n foresight-prod
-          kubectl rollout status deployment/foresight-api -n foresight-prod --timeout=10m
+          helm upgrade --install foresight \
+            infrastructure/kubernetes/helm/foresight/ \
+            --namespace foresight-prod \
+            --create-namespace \
+            --set global.imageTag=${{ github.sha }} \
+            --set global.environment=production \
+            --wait \
+            --timeout 10m
+
+      - name: Verify production rollout
+        run: |
+          kubectl rollout status deployment/foresight-api -n foresight-prod --timeout=5m
+          kubectl rollout status deployment/foresight-dashboard -n foresight-prod --timeout=5m
 
       - name: Tag production deployment
         run: |

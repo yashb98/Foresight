@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: foresight
+  labels:
+    app.kubernetes.io/name: foresight
+    app.kubernetes.io/managed-by: kubectl
+    environment: production

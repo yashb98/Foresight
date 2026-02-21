@@ -1,0 +1,19 @@
+apiVersion: v2
+name: foresight
+description: >
+  FORESIGHT Predictive Asset Maintenance Platform.
+  Multi-tenant SaaS for predictive failure detection in industrial asset fleets.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - predictive-maintenance
+  - iot
+  - machine-learning
+  - asset-management
+home: https://github.com/your-org/foresight
+sources:
+  - https://github.com/your-org/foresight
+maintainers:
+  - name: Foresight Engineering
+    email: engineering@foresight.example.com

@@ -1,0 +1,70 @@
+# Prometheus ServiceMonitor — requires kube-prometheus-stack installed
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: foresight-api
+  namespace: foresight
+  labels:
+    app: foresight-api
+    # Label must match the prometheus operator's serviceMonitorSelector
+    prometheus: kube-prometheus
+spec:
+  selector:
+    matchLabels:
+      app: foresight-api
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
+      scrapeTimeout: 10s
+
+---
+# PrometheusRule — alert rules for the FORESIGHT API
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: foresight-api-alerts
+  namespace: foresight
+  labels:
+    prometheus: kube-prometheus
+spec:
+  groups:
+    - name: foresight.api
+      interval: 30s
+      rules:
+        - alert: ForesightAPIHighLatency
+          expr: |
+            histogram_quantile(0.99,
+              sum(rate(http_request_duration_seconds_bucket{service="foresight-api"}[5m])) by (le)
+            ) > 2.0
+          for: 5m
+          labels:
+            severity: warning
+            service: foresight-api
+          annotations:
+            summary: "FORESIGHT API p99 latency > 2s"
+            description: "p99 latency is {{ $value | humanizeDuration }} (threshold: 2s)"
+
+        - alert: ForesightAPIErrorRateHigh
+          expr: |
+            sum(rate(http_requests_total{service="foresight-api",status=~"5.."}[5m]))
+            /
+            sum(rate(http_requests_total{service="foresight-api"}[5m]))
+            > 0.05
+          for: 3m
+          labels:
+            severity: critical
+            service: foresight-api
+          annotations:
+            summary: "FORESIGHT API 5xx error rate > 5%"
+            description: "Error rate is {{ $value | humanizePercentage }}"
+
+        - alert: ForesightAPIPodDown
+          expr: kube_deployment_status_replicas_available{deployment="foresight-api"} < 2
+          for: 2m
+          labels:
+            severity: critical
+            service: foresight-api
+          annotations:
+            summary: "FORESIGHT API has fewer than 2 available replicas"
+            description: "Only {{ $value }} replicas available (minimum: 2)"

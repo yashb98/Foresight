@@ -1,0 +1,77 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: foresight-dashboard
+  namespace: foresight
+  labels:
+    app: foresight-dashboard
+    component: frontend
+    version: "0.1.0"
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: foresight-dashboard
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: foresight-dashboard
+        component: frontend
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101       # nginx user
+      containers:
+        - name: dashboard
+          image: ghcr.io/foresight/foresight-dashboard:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 80
+              name: http
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false    # nginx writes to /tmp and /var/cache
+            capabilities:
+              drop: ["ALL"]
+              add: ["NET_BIND_SERVICE"]
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: foresight-dashboard
+  namespace: foresight
+  labels:
+    app: foresight-dashboard
+spec:
+  type: ClusterIP
+  selector:
+    app: foresight-dashboard
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80

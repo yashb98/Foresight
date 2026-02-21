@@ -1,0 +1,12 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: foresight-api-pdb
+  namespace: foresight
+  labels:
+    app: foresight-api
+spec:
+  minAvailable: 2        # Always keep at least 2 replicas during voluntary disruptions
+  selector:
+    matchLabels:
+      app: foresight-api

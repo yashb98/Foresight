@@ -249,7 +249,128 @@ class RuleListResponse(BaseModel):
 
 
 # =============================================================================
-# Reports
+# Alert Rules (new detailed schemas for /rules router)
+# =============================================================================
+
+class AlertRuleCreate(BaseModel):
+    """POST /rules/{tenant_id} — create a new alert rule."""
+
+    name: str = Field(..., description="Human-readable rule name")
+    description: Optional[str] = None
+    asset_type: Optional[str] = Field(None, description="Filter to asset type, or None for all")
+    metric: str = Field(..., description="Sensor metric (e.g. vibration_rms, bearing_temp_celsius)")
+    operator: str = Field(..., pattern="^(gt|lt|gte|lte|eq)$", description="Comparison operator")
+    threshold: float = Field(..., ge=0, description="Threshold value for the metric")
+    severity: str = Field(..., pattern="^(low|medium|high|critical)$")
+
+    @field_validator("threshold")
+    @classmethod
+    def threshold_must_be_non_negative(cls, v: float) -> float:
+        if v < 0:
+            raise ValueError("threshold must be >= 0")
+        return v
+
+
+class AlertRuleUpdate(BaseModel):
+    """PUT /rules/{tenant_id}/{rule_id} — partial update (all fields optional)."""
+
+    name: Optional[str] = None
+    description: Optional[str] = None
+    asset_type: Optional[str] = None
+    metric: Optional[str] = None
+    operator: Optional[str] = Field(None, pattern="^(gt|lt|gte|lte|eq)$")
+    threshold: Optional[float] = Field(None, ge=0)
+    severity: Optional[str] = Field(None, pattern="^(low|medium|high|critical)$")
+    is_active: Optional[bool] = None
+
+
+class AlertRuleResponse(BaseModel):
+    """Response schema for a single alert rule."""
+
+    id: str
+    tenant_id: str
+    name: str
+    description: Optional[str] = None
+    asset_type: Optional[str] = None
+    metric: str
+    operator: str
+    threshold: float
+    severity: str
+    is_active: bool
+    created_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
+# =============================================================================
+# Report Schemas (new detailed schemas for /reports router)
+# =============================================================================
+
+class FleetSummaryResponse(BaseModel):
+    """GET /reports/{tenant_id}/summary — fleet KPI dashboard."""
+
+    tenant_id: str
+    total_assets: int
+    active_assets: int
+    critical_alerts: int
+    high_alerts: int
+    medium_alerts: int
+    low_alerts: int
+    assets_at_risk: int
+    fleet_health_score: float = Field(..., description="Fleet health 0–100")
+    as_of: datetime
+
+
+class AssetHealthSummary(BaseModel):
+    """GET /reports/{tenant_id}/asset/{asset_id} — single asset maintenance report."""
+
+    asset_id: str
+    asset_name: str
+    asset_type: str
+    tenant_id: str
+    health_score: float
+    status: str
+    failure_probability_30d: float
+    days_to_maintenance: Optional[int] = None
+    open_alert_count: int
+    alert_summary: List[Dict[str, Any]] = Field(default_factory=list)
+    last_updated: datetime
+
+
+class TrendDataPoint(BaseModel):
+    """One data point in a time-series trend response."""
+
+    date: str  # YYYY-MM-DD
+    avg_value: float
+    max_value: float
+    min_value: float
+    reading_count: int
+
+
+class TrendResponse(BaseModel):
+    """GET /reports/{tenant_id}/trends response."""
+
+    tenant_id: str
+    metric: str
+    days: int
+    data_points: List[TrendDataPoint]
+
+
+class CostAvoidanceReport(BaseModel):
+    """GET /reports/{tenant_id}/cost-avoidance response."""
+
+    tenant_id: str
+    year: int
+    total_predicted_failures: int
+    estimated_cost_avoided_usd: float
+    actual_maintenance_cost_usd: float
+    roi_percent: float
+    breakdown_by_severity: Dict[str, int]
+    generated_at: datetime
+
+
+# =============================================================================
+# Reports (legacy metadata schemas)
 # =============================================================================
 
 class ReportMetadata(BaseModel):
