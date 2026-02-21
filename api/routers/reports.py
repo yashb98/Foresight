@@ -57,47 +57,9 @@ async def fleet_summary(
 ) -> FleetSummaryResponse:
     verify_tenant_access(tenant_id, current_tenant)
 
-    try:
-        from infrastructure.db.base import Asset, Alert
-
-        # Asset counts
-        total_q = await db.execute(
-            select(func.count()).select_from(Asset).where(Asset.tenant_id == tenant_id)
-        )
-        total_assets = total_q.scalar_one()
-
-        active_q = await db.execute(
-            select(func.count())
-            .select_from(Asset)
-            .where(Asset.tenant_id == tenant_id)
-            .where(Asset.status == "active")
-        )
-        active_assets = active_q.scalar_one()
-
-        # Alert counts
-        alert_q = await db.execute(
-            select(Alert.severity, func.count())
-            .where(Alert.tenant_id == tenant_id)
-            .where(Alert.status == "open")
-            .group_by(Alert.severity)
-        )
-        alert_counts = {row[0]: row[1] for row in alert_q.all()}
-
-        return FleetSummaryResponse(
-            tenant_id=tenant_id,
-            total_assets=total_assets,
-            active_assets=active_assets,
-            critical_alerts=alert_counts.get("critical", 0),
-            high_alerts=alert_counts.get("high", 0),
-            medium_alerts=alert_counts.get("medium", 0),
-            low_alerts=alert_counts.get("low", 0),
-            assets_at_risk=alert_counts.get("critical", 0) + alert_counts.get("high", 0),
-            fleet_health_score=_compute_fleet_health(total_assets, alert_counts),
-            as_of=datetime.now(timezone.utc),
-        )
-    except Exception as exc:
-        log.exception("Error generating fleet summary for tenant=%s: %s", tenant_id, exc)
-        return _demo_fleet_summary(tenant_id)
+    from api.feature_store import fleet_summary as fs_summary
+    data = fs_summary(tenant_id)
+    return FleetSummaryResponse(**data)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -197,55 +159,10 @@ async def fleet_trends(
 ) -> TrendResponse:
     verify_tenant_access(tenant_id, current_tenant)
 
-    # In production this queries the MongoDB time-series collection.
-    # For now we generate plausible synthetic trend data.
-    try:
-        import motor.motor_asyncio as motor
-        import os
-
-        mongo_url = os.getenv("MONGO_URL", "mongodb://localhost:27017")
-        client = motor.AsyncIOMotorClient(mongo_url, serverSelectionTimeoutMS=1000)
-        db_mongo = client["foresight"]
-        collection = db_mongo["sensor_readings"]
-
-        pipeline = [
-            {
-                "$match": {
-                    "tenant_id": tenant_id,
-                    "metric": metric,
-                    "timestamp": {"$gte": datetime.now(timezone.utc) - timedelta(days=days)},
-                    **({"asset_id": asset_id} if asset_id else {}),
-                }
-            },
-            {
-                "$group": {
-                    "_id": {"$dateToString": {"format": "%Y-%m-%d", "date": "$timestamp"}},
-                    "avg_value": {"$avg": "$value"},
-                    "max_value": {"$max": "$value"},
-                    "min_value": {"$min": "$value"},
-                    "reading_count": {"$sum": 1},
-                }
-            },
-            {"$sort": {"_id": 1}},
-        ]
-        cursor = collection.aggregate(pipeline)
-        points = []
-        async for doc in cursor:
-            points.append(
-                TrendDataPoint(
-                    date=doc["_id"],
-                    avg_value=round(doc["avg_value"], 4),
-                    max_value=round(doc["max_value"], 4),
-                    min_value=round(doc["min_value"], 4),
-                    reading_count=doc["reading_count"],
-                )
-            )
-        if points:
-            return TrendResponse(tenant_id=tenant_id, metric=metric, days=days, data_points=points)
-    except Exception:
-        pass  # fall back to synthetic data
-
-    return _demo_trends(tenant_id, metric, days)
+    from api.feature_store import trend_data
+    data = trend_data(tenant_id, metric, days, asset_id)
+    points = [TrendDataPoint(**p) for p in data["data_points"]]
+    return TrendResponse(tenant_id=tenant_id, metric=metric, days=days, data_points=points)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -271,30 +188,9 @@ async def cost_avoidance(
 ) -> CostAvoidanceReport:
     verify_tenant_access(tenant_id, current_tenant)
 
-    # In production this aggregates from the maintenance_events table.
-    # Here we compute from alert/prediction data with industry cost benchmarks.
-    try:
-        from infrastructure.db.base import Alert
-
-        jan_1 = datetime(year, 1, 1, tzinfo=timezone.utc)
-        dec_31 = datetime(year, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
-
-        q = await db.execute(
-            select(Alert.severity, func.count())
-            .where(Alert.tenant_id == tenant_id)
-            .where(Alert.status == "resolved")
-            .where(Alert.created_at.between(jan_1, dec_31))
-            .group_by(Alert.severity)
-        )
-        resolved_by_severity = {row[0]: row[1] for row in q.all()}
-        return _build_cost_avoidance_report(tenant_id, year, resolved_by_severity)
-    except Exception as exc:
-        log.warning("Cost avoidance DB query failed, using demo: %s", exc)
-        return _build_cost_avoidance_report(
-            tenant_id,
-            year,
-            {"critical": 8, "high": 23, "medium": 47, "low": 91},
-        )
+    from api.feature_store import cost_avoidance_data
+    data = cost_avoidance_data(tenant_id, year)
+    return CostAvoidanceReport(**data)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

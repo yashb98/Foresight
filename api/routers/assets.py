@@ -70,86 +70,43 @@ async def list_assets(
     """
     verify_tenant_access(tenant_id, current_tenant)
 
-    offset = (page - 1) * page_size
-
-    # Build dynamic WHERE clauses
-    conditions = ["a.tenant_id = :tenant_id", "a.is_active = true"]
-    params: dict = {"tenant_id": tenant_id, "limit": page_size, "offset": offset}
-
-    if asset_type:
-        conditions.append("a.asset_type = :asset_type")
-        params["asset_type"] = asset_type
-
-    if criticality:
-        conditions.append("a.criticality = :criticality")
-        params["criticality"] = criticality
-
-    where_clause = " AND ".join(conditions)
-
-    rows = await db.execute(
-        text(f"""
-            SELECT
-                a.asset_id, a.tenant_id, a.name, a.asset_type,
-                a.location, a.criticality, a.installed_date, a.source_system,
-                a.is_active,
-                hs.health_score, hs.failure_prob_7d, hs.failure_prob_30d, hs.score_date
-            FROM assets a
-            LEFT JOIN LATERAL (
-                SELECT health_score, failure_prob_7d, failure_prob_30d, score_date
-                FROM asset_health_scores
-                WHERE asset_id = a.asset_id
-                ORDER BY score_date DESC
-                LIMIT 1
-            ) hs ON true
-            WHERE {where_clause}
-            ORDER BY hs.failure_prob_30d DESC NULLS LAST, a.criticality DESC
-            LIMIT :limit OFFSET :offset
-        """),
-        params,
+    from api.feature_store import asset_list
+    data = asset_list(
+        tenant_id,
+        page=page,
+        page_size=page_size,
+        asset_type_filter=asset_type,
+        risk_filter=risk_level,
     )
-    asset_rows = rows.fetchall()
-
-    count_result = await db.execute(
-        text(f"SELECT COUNT(*) FROM assets a WHERE {where_clause}"),
-        {k: v for k, v in params.items() if k not in ("limit", "offset")},
-    )
-    total = count_result.scalar() or 0
 
     assets = []
-    for row in asset_rows:
-        prob_30d = float(row[11]) if row[11] is not None else None
-        rl = _risk_level(prob_30d)
-
-        # Apply risk_level filter in Python (avoids complex SQL for computed field)
-        if risk_level and rl != risk_level:
-            continue
-
+    for a in data["assets"]:
+        ch = a.get("current_health")
         assets.append(
             AssetResponse(
-                asset_id=str(row[0]),
-                tenant_id=str(row[1]),
-                name=row[2],
-                asset_type=row[3],
-                location=row[4],
-                criticality=row[5],
-                installed_date=row[6],
-                source_system=row[7],
-                is_active=row[8],
+                asset_id=a["asset_id"],
+                tenant_id=a["tenant_id"],
+                name=a["name"],
+                asset_type=a["asset_type"],
+                location=a["location"],
+                criticality=a["criticality"],
+                installed_date=a.get("installed_date"),
+                source_system=a.get("source_system"),
+                is_active=a.get("is_active", True),
                 current_health=(
                     HealthScoreSummary(
-                        health_score=float(row[9]) if row[9] is not None else None,
-                        failure_prob_7d=float(row[10]) if row[10] is not None else None,
-                        failure_prob_30d=prob_30d,
-                        score_date=row[12],
-                        risk_level=rl,
+                        health_score=ch["health_score"],
+                        failure_prob_7d=ch["failure_prob_7d"],
+                        failure_prob_30d=ch["failure_prob_30d"],
+                        score_date=ch["score_date"],
+                        risk_level=ch["risk_level"],
                     )
-                    if row[9] is not None
-                    else None
+                    if ch else None
                 ),
             )
         )
 
-    return AssetListResponse(tenant_id=tenant_id, total=int(total), assets=assets)
+    return AssetListResponse(tenant_id=tenant_id, total=data["total"], assets=assets)
 
 
 @router.get(
