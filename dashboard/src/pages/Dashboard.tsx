@@ -18,7 +18,7 @@ import { useFleetSummary } from '@/hooks/useFleetSummary'
 import { useTrends } from '@/hooks/useTrends'
 import { formatDate } from '@/lib/utils'
 import {
-  Cpu, ShieldAlert, AlertTriangle, Activity, TrendingUp, DollarSign,
+  Cpu, ShieldAlert, AlertTriangle, Activity, TrendingUp,
 } from 'lucide-react'
 
 function KpiCard({

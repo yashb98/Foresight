@@ -2,7 +2,7 @@
  * HealthGauge — circular arc gauge for fleet health score (0–100)
  */
 
-import { cn, healthScoreColour } from '@/lib/utils'
+import { cn } from '@/lib/utils'
 
 interface HealthGaugeProps {
   score: number
