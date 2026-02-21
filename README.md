@@ -903,12 +903,6 @@ Dashboard environment (`.env.local` in `dashboard/`):
 
 ---
 
-## Licence
-
-MIT © 2024 FORESIGHT Engineering
-
----
-
 <details>
 <summary><strong>Architecture Decision Records (ADRs)</strong></summary>
 
