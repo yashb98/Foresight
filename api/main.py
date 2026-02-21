@@ -17,7 +17,7 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from api.routers import alerts, assets, predictions, reports, rules
+from api.routers import alerts, assets, data_sources, predictions, reports, rules
 
 log = logging.getLogger("foresight.api")
 
@@ -157,6 +157,7 @@ app.include_router(alerts.router, prefix="/alerts", tags=["Alerts"])
 app.include_router(predictions.router, prefix="/predict", tags=["Predictions"])
 app.include_router(rules.router, prefix="/rules", tags=["Alert Rules"])
 app.include_router(reports.router, prefix="/reports", tags=["Reports"])
+app.include_router(data_sources.router, prefix="/data-sources", tags=["Data Sources"])
 
 
 # ─────────────────────────────────────────────────────────────────────────────

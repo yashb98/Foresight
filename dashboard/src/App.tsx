@@ -12,6 +12,7 @@ import { Alerts } from '@/pages/Alerts'
 import { Trends } from '@/pages/Trends'
 import { Predictions } from '@/pages/Predictions'
 import { CostAvoidance } from '@/pages/CostAvoidance'
+import { DataSources } from '@/pages/DataSources'
 import { Rules } from '@/pages/Rules'
 import { Settings } from '@/pages/Settings'
 
@@ -27,6 +28,7 @@ export default function App() {
           <Route path="/trends"      element={<Trends />} />
           <Route path="/predictions" element={<Predictions />} />
           <Route path="/cost"        element={<CostAvoidance />} />
+          <Route path="/data-sources" element={<DataSources />} />
           <Route path="/rules"       element={<Rules />} />
           <Route path="/settings"    element={<Settings />} />
         </Route>

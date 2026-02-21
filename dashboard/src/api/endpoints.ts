@@ -17,6 +17,16 @@ import type {
   Prediction,
   TrendResponse,
 } from '@/types'
+import type {
+  DataSource,
+  DataSourceListResponse,
+  TestConnectionRequest,
+  TestConnectionResponse,
+  CreateDataSourceRequest,
+  UpdateDataSourceRequest,
+  ImportJob,
+  CreateImportJobRequest,
+} from '@/types/dataSource'
 
 // Default tenant ID for single-tenant mode
 const DEFAULT_TENANT_ID = '11111111-1111-1111-1111-111111111111'
@@ -163,5 +173,58 @@ export async function fetchCostAvoidance(year?: number): Promise<CostAvoidanceRe
 
 export async function fetchAssetReport(assetId: string) {
   const { data } = await apiClient.get(`/reports/${DEFAULT_TENANT_ID}/asset/${assetId}`)
+  return data
+}
+
+// -----------------------------------------------------------------------------
+// Data Sources
+// -----------------------------------------------------------------------------
+
+export async function fetchDataSources(activeOnly?: boolean): Promise<DataSourceListResponse> {
+  const { data } = await apiClient.get<DataSourceListResponse>('/data-sources', {
+    params: activeOnly !== undefined ? { active_only: activeOnly } : {},
+  })
+  return data
+}
+
+export async function fetchDataSource(sourceId: string): Promise<DataSource> {
+  const { data } = await apiClient.get<DataSource>(`/data-sources/${sourceId}`)
+  return data
+}
+
+export async function createDataSource(payload: CreateDataSourceRequest): Promise<DataSource> {
+  const { data } = await apiClient.post<DataSource>('/data-sources', payload)
+  return data
+}
+
+export async function updateDataSource(
+  sourceId: string,
+  payload: UpdateDataSourceRequest
+): Promise<DataSource> {
+  const { data } = await apiClient.put<DataSource>(`/data-sources/${sourceId}`, payload)
+  return data
+}
+
+export async function deleteDataSource(sourceId: string): Promise<void> {
+  await apiClient.delete(`/data-sources/${sourceId}`)
+}
+
+export async function testConnection(payload: TestConnectionRequest): Promise<TestConnectionResponse> {
+  const { data } = await apiClient.post<TestConnectionResponse>('/data-sources/test', payload)
+  return data
+}
+
+export async function testSavedConnection(sourceId: string): Promise<TestConnectionResponse> {
+  const { data } = await apiClient.post<TestConnectionResponse>(`/data-sources/${sourceId}/test`)
+  return data
+}
+
+export async function createImportJob(sourceId: string, payload: CreateImportJobRequest): Promise<ImportJob> {
+  const { data } = await apiClient.post<ImportJob>(`/data-sources/${sourceId}/import`, payload)
+  return data
+}
+
+export async function fetchImportJobs(sourceId: string): Promise<ImportJob[]> {
+  const { data } = await apiClient.get<ImportJob[]>(`/data-sources/${sourceId}/imports`)
   return data
 }

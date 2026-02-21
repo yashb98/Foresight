@@ -78,6 +78,7 @@ class Tenant(Base):
     assets = relationship("Asset", back_populates="tenant", lazy="dynamic")
     alerts = relationship("Alert", back_populates="tenant", lazy="dynamic")
     rules = relationship("ThresholdRule", back_populates="tenant", lazy="dynamic")
+    data_sources = relationship("DataSource", back_populates="tenant", lazy="dynamic")
 
     __table_args__ = (
         Index("idx_tenants_client_id", "client_id"),
@@ -337,3 +338,101 @@ class MaintenanceRecord(Base):
             f"<MaintenanceRecord id={self.record_id} asset={self.asset_id} "
             f"type={self.maintenance_type} at={self.performed_at}>"
         )
+
+
+# =============================================================================
+# data_sources — external data source connections
+# =============================================================================
+class DataSource(Base):
+    """
+    An external data source connection (PostgreSQL, MySQL, API, CSV, etc.).
+    """
+
+    __tablename__ = "data_sources"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    tenant_id = Column(UUID(as_uuid=False), ForeignKey("tenants.tenant_id", ondelete="CASCADE"),
+                       nullable=False)
+    name = Column(String(100), nullable=False)
+    source_type = Column(
+        Enum("postgresql", "mysql", "mongodb", "csv", "api", "snowflake", "bigquery",
+             name="data_source_type_enum"),
+        nullable=False,
+    )
+    description = Column(Text, nullable=True)
+    config = Column(JSONB, nullable=False, default=dict,
+                    comment="Type-specific connection configuration")
+    is_active = Column(Boolean, nullable=False, default=True)
+    status = Column(
+        Enum("active", "inactive", "error", "testing", name="connection_status_enum"),
+        nullable=False,
+        default="inactive",
+    )
+    last_tested_at = Column(DateTime(timezone=True), nullable=True)
+    last_error = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(),
+                        onupdate=func.now(), nullable=True)
+
+    # Relationships
+    tenant = relationship("Tenant", back_populates="data_sources")
+    import_jobs = relationship("ImportJob", back_populates="source", lazy="dynamic")
+
+    __table_args__ = (
+        Index("idx_data_sources_tenant", "tenant_id"),
+        Index("idx_data_sources_tenant_active", "tenant_id", "is_active"),
+        Index("idx_data_sources_type", "source_type"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<DataSource id={self.id} name={self.name} type={self.source_type}>"
+
+
+# =============================================================================
+# import_jobs — data import jobs from external sources
+# =============================================================================
+class ImportJob(Base):
+    """
+    A job to import data from an external source into the platform.
+    """
+
+    __tablename__ = "import_jobs"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    tenant_id = Column(UUID(as_uuid=False), ForeignKey("tenants.tenant_id", ondelete="CASCADE"),
+                       nullable=False)
+    source_id = Column(UUID(as_uuid=False), ForeignKey("data_sources.id", ondelete="CASCADE"),
+                       nullable=False)
+    target_table = Column(String(100), nullable=False,
+                          comment="Destination table for the import")
+    query = Column(Text, nullable=True,
+                   comment="Custom query or filter for the import")
+    mapping = Column(JSONB, nullable=False, default=dict,
+                     comment="Source to target column mapping")
+    schedule = Column(String(100), nullable=True,
+                      comment="Cron expression for scheduled imports")
+    status = Column(
+        Enum("pending", "running", "completed", "failed", "cancelled",
+             name="import_job_status_enum"),
+        nullable=False,
+        default="pending",
+    )
+    records_imported = Column(Numeric(12, 0), nullable=True, default=0)
+    records_failed = Column(Numeric(12, 0), nullable=True, default=0)
+    error_message = Column(Text, nullable=True)
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    # Relationships
+    source = relationship("DataSource", back_populates="import_jobs")
+
+    __table_args__ = (
+        Index("idx_import_jobs_tenant", "tenant_id"),
+        Index("idx_import_jobs_source", "source_id"),
+        Index("idx_import_jobs_status", "status"),
+        Index("idx_import_jobs_created", "created_at"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<ImportJob id={self.id} source={self.source_id} status={self.status}>"

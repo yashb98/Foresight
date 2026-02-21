@@ -9,6 +9,7 @@ import {
   DollarSign,
   Zap,
   ChevronRight,
+  Database,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -19,6 +20,7 @@ const navItems = [
   { to: '/trends',       icon: TrendingUp,      label: 'Trends' },
   { to: '/predictions',  icon: Zap,             label: 'Predictions' },
   { to: '/cost',         icon: DollarSign,      label: 'Cost Avoidance' },
+  { to: '/data-sources', icon: Database,        label: 'Data Sources' },
   { to: '/rules',        icon: ShieldCheck,     label: 'Alert Rules' },
   { to: '/settings',     icon: Settings,        label: 'Settings' },
 ]
