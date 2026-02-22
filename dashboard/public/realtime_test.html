@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FORESIGHT - Real-time Dashboard Test</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f172a; color: #e2e8f0; padding: 20px;
+        }
+        .container { max-width: 1200px; margin: 0 auto; }
+        h1 { color: #3b82f6; margin-bottom: 10px; }
+        .subtitle { color: #64748b; margin-bottom: 30px; }
+        .connection-panel {
+            background: #1e293b; padding: 20px; border-radius: 8px; margin-bottom: 20px;
+        }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; color: #94a3b8; font-size: 14px; }
+        input[type="text"], input[type="password"] {
+            width: 100%; padding: 10px; border: 1px solid #334155;
+            border-radius: 4px; background: #0f172a; color: #e2e8f0;
+        }
+        button {
+            padding: 10px 20px; border: none; border-radius: 4px;
+            cursor: pointer; font-weight: 600; transition: all 0.2s;
+        }
+        .btn-primary { background: #3b82f6; color: white; }
+        .btn-primary:hover { background: #2563eb; }
+        .btn-danger { background: #ef4444; color: white; }
+        .btn-danger:hover { background: #dc2626; }
+        .status {
+            display: inline-block; padding: 4px 12px;
+            border-radius: 20px; font-size: 12px; font-weight: 600;
+        }
+        .status.connected { background: #10b981; color: white; }
+        .status.disconnected { background: #64748b; color: white; }
+        .status.error { background: #ef4444; color: white; }
+        .metrics-grid {
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px; margin-bottom: 20px;
+        }
+        .metric-card {
+            background: #1e293b; padding: 20px; border-radius: 8px;
+            border-left: 4px solid #3b82f6;
+        }
+        .metric-card.alert { border-left-color: #ef4444; }
+        .metric-card.sensor { border-left-color: #10b981; }
+        .metric-label { font-size: 12px; color: #64748b; text-transform: uppercase; margin-bottom: 5px; }
+        .metric-value { font-size: 24px; font-weight: 700; }
+        .log-panel { background: #1e293b; padding: 20px; border-radius: 8px; }
+        .log-header {
+            display: flex; justify-content: space-between;
+            align-items: center; margin-bottom: 15px;
+        }
+        .log-container {
+            background: #0f172a; border: 1px solid #334155;
+            border-radius: 4px; padding: 10px; height: 300px;
+            overflow-y: auto; font-family: 'Courier New', monospace; font-size: 12px;
+        }
+        .log-entry { padding: 4px 0; border-bottom: 1px solid #1e293b; }
+        .log-time { color: #64748b; }
+        .log-type-sensor { color: #10b981; }
+        .log-type-alert { color: #ef4444; }
+        .log-type-health { color: #3b82f6; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔴 FORESIGHT Real-time Dashboard</h1>
+        <p class="subtitle">Live sensor data, alerts, and health scores</p>
+        
+        <div class="connection-panel">
+            <h3>Connection Settings</h3>
+            <div class="form-group">
+                <label>API Base URL</label>
+                <input type="text" id="apiUrl" value="http://localhost:8000">
+            </div>
+            <div class="form-group">
+                <label>Email</label>
+                <input type="text" id="email" value="admin@assetpulse.local">
+            </div>
+            <div class="form-group">
+                <label>Password</label>
+                <input type="password" id="password" value="admin123">
+            </div>
+            <div class="form-group">
+                <label>Tenant ID</label>
+                <input type="text" id="tenantId" value="550e8400-e29b-41d4-a716-446655440000">
+            </div>
+            <div>
+                <button class="btn-primary" id="connectBtn" onclick="connect()">Connect</button>
+                <button class="btn-danger hidden" id="disconnectBtn" onclick="disconnect()">Disconnect</button>
+                <span class="status disconnected" id="status">Disconnected</span>
+            </div>
+        </div>
+        
+        <div class="metrics-grid">
+            <div class="metric-card">
+                <div class="metric-label">Total Sensor Readings</div>
+                <div class="metric-value" id="sensorCount">0</div>
+            </div>
+            <div class="metric-card alert">
+                <div class="metric-label">Active Alerts</div>
+                <div class="metric-value" id="alertCount">0</div>
+            </div>
+            <div class="metric-card sensor">
+                <div class="metric-label">Connected Clients</div>
+                <div class="metric-value" id="clientCount">0</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">Last Update</div>
+                <div class="metric-value" id="lastUpdate" style="font-size: 14px;">--</div>
+            </div>
+        </div>
+        
+        <div class="log-panel">
+            <div class="log-header">
+                <h3>Live Data Stream</h3>
+                <button onclick="clearLogs()">Clear</button>
+            </div>
+            <div class="log-container" id="logContainer">
+                <div class="log-entry">
+                    <span class="log-time">[--:--:--]</span> Click "Connect" to start receiving real-time data...
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let ws = null;
+        let token = null;
+        let sensorCount = 0;
+        let alertCount = 0;
+
+        function log(message, type = 'info') {
+            const container = document.getElementById('logContainer');
+            const time = new Date().toLocaleTimeString();
+            const typeClass = type === 'sensor' ? 'log-type-sensor' : 
+                             type === 'alert' ? 'log-type-alert' : 
+                             type === 'health' ? 'log-type-health' : '';
+            
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            entry.innerHTML = `<span class="log-time">[${time}]</span> <span class="${typeClass}">${message}</span>`;
+            container.insertBefore(entry, container.firstChild);
+            
+            while (container.children.length > 100) {
+                container.removeChild(container.lastChild);
+            }
+        }
+
+        function clearLogs() {
+            document.getElementById('logContainer').innerHTML = '';
+        }
+
+        function updateStatus(status, text) {
+            const statusEl = document.getElementById('status');
+            statusEl.className = 'status ' + status;
+            statusEl.textContent = text;
+        }
+
+        async function getToken() {
+            const apiUrl = document.getElementById('apiUrl').value;
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+
+            try {
+                const response = await fetch(`${apiUrl}/auth/token`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password })
+                });
+
+                if (!response.ok) throw new Error('Authentication failed');
+
+                const data = await response.json();
+                return data.access_token;
+            } catch (error) {
+                log('Authentication failed: ' + error.message, 'alert');
+                return null;
+            }
+        }
+
+        async function connect() {
+            if (ws) {
+                log('Already connected');
+                return;
+            }
+
+            const apiUrl = document.getElementById('apiUrl').value;
+            const tenantId = document.getElementById('tenantId').value;
+            const wsUrl = apiUrl.replace('http', 'ws');
+
+            updateStatus('', 'Authenticating...');
+            token = await getToken();
+            
+            if (!token) {
+                updateStatus('error', 'Auth Failed');
+                return;
+            }
+
+            log('Token obtained, connecting to WebSocket...');
+
+            ws = new WebSocket(`${wsUrl}/ws/dashboard/${tenantId}?token=${token}`);
+
+            ws.onopen = () => {
+                log('WebSocket connected!', 'sensor');
+                updateStatus('connected', 'Connected');
+                document.getElementById('connectBtn').classList.add('hidden');
+                document.getElementById('disconnectBtn').classList.remove('hidden');
+                
+                ws.send(JSON.stringify({
+                    type: 'subscribe',
+                    channels: ['sensor_data', 'alerts', 'health_scores']
+                }));
+                
+                sensorCount = 0;
+                alertCount = 0;
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    handleMessage(data);
+                } catch (error) {
+                    log('Invalid message: ' + event.data, 'alert');
+                }
+            };
+
+            ws.onerror = (error) => {
+                log('WebSocket error: ' + error, 'alert');
+                updateStatus('error', 'Error');
+            };
+
+            ws.onclose = () => {
+                log('WebSocket disconnected', 'alert');
+                updateStatus('disconnected', 'Disconnected');
+                document.getElementById('connectBtn').classList.remove('hidden');
+                document.getElementById('disconnectBtn').classList.add('hidden');
+                ws = null;
+            };
+        }
+
+        function handleMessage(data) {
+            const time = new Date().toLocaleTimeString();
+            document.getElementById('lastUpdate').textContent = time;
+
+            switch (data.type) {
+                case 'connected':
+                    log('Connected: ' + data.message, 'sensor');
+                    break;
+                case 'sensor_update':
+                    sensorCount++;
+                    document.getElementById('sensorCount').textContent = sensorCount;
+                    const sensor = data.data;
+                    log(`${sensor.asset_id} | ${sensor.sensor_type}: ${sensor.value} ${sensor.unit}`, 'sensor');
+                    break;
+                case 'alert_triggered':
+                    alertCount++;
+                    document.getElementById('alertCount').textContent = alertCount;
+                    log(`ALERT: ${data.data.title} [${data.data.severity}]`, 'alert');
+                    break;
+                case 'health_update':
+                    log(`Health Update: ${data.data.asset_id} = ${data.data.score}`, 'health');
+                    break;
+                case 'refresh':
+                    log('Dashboard refresh requested', 'health');
+                    break;
+                case 'pong':
+                case 'heartbeat':
+                    break;
+                default:
+                    log('Received: ' + JSON.stringify(data).substring(0, 100));
+            }
+        }
+
+        function disconnect() {
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+        }
+    </script>
+</body>
+</html>

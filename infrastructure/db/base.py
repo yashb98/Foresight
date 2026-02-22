@@ -436,3 +436,35 @@ class ImportJob(Base):
 
     def __repr__(self) -> str:
         return f"<ImportJob id={self.id} source={self.source_id} status={self.status}>"
+
+
+# =============================================================================
+# feature_store — auto-generated features from imported data
+# =============================================================================
+class FeatureStore(Base):
+    """
+    Auto-generated features from imported data tables.
+    Used by the ML model for predictions.
+    """
+
+    __tablename__ = "feature_store"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    table_name = Column(String(100), nullable=False)
+    column_name = Column(String(100), nullable=False)
+    feature_type = Column(String(50), nullable=False, default="numeric")
+    mean_value = Column(Numeric(15, 6), nullable=True)
+    std_value = Column(Numeric(15, 6), nullable=True)
+    min_value = Column(Numeric(15, 6), nullable=True)
+    max_value = Column(Numeric(15, 6), nullable=True)
+    sample_count = Column(Numeric(12, 0), nullable=True, default=0)
+    generated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        Index("idx_feature_store_table", "table_name"),
+        Index("idx_feature_store_column", "table_name", "column_name"),
+        Index("idx_feature_store_generated", "generated_at"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<FeatureStore table={self.table_name} column={self.column_name}>"

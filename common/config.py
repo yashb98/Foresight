@@ -1,127 +1,218 @@
-"""
-FORESIGHT — Centralised configuration loader.
+# =============================================================================
+# FORESIGHT — Configuration
+# Environment-based configuration using Pydantic Settings
+# =============================================================================
 
-All configuration is read from environment variables.
-Provides a single Settings object imported by every module.
-Pydantic BaseSettings validates types and raises clear errors for missing vars.
-"""
+import os
+from typing import List, Optional
 
-from __future__ import annotations
-
-from functools import lru_cache
-from typing import List
-
-from pydantic import field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings
+from pydantic import Field, validator
 
 
 class Settings(BaseSettings):
-    """Application-wide settings loaded from environment variables / .env file."""
-
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        case_sensitive=False,
-        extra="ignore",
-    )
-
-    # --- Project ---
-    environment: str = "development"
-    log_level: str = "INFO"
-    log_format: str = "json"  # "json" | "text"
-
-    # --- PostgreSQL ---
-    postgres_host: str = "postgres"
-    postgres_port: int = 5432
-    postgres_db: str = "foresight"
-    postgres_user: str = "foresight_user"
-    postgres_password: str
-    database_url: str  # async DSN (asyncpg)
-    database_url_sync: str  # sync DSN (psycopg2) — used by Alembic / Airflow
-
-    # --- MongoDB ---
-    mongo_host: str = "mongodb"
-    mongo_port: int = 27017
-    mongo_db: str = "foresight"
-    mongo_root_user: str = "root"
-    mongo_root_password: str
-    mongo_uri: str
-
-    # --- Kafka ---
-    kafka_bootstrap_servers: str = "kafka:9092"
-    kafka_topic_sensor_data: str = "sensor-readings"
-    kafka_topic_alerts: str = "asset-alerts"
-    kafka_topic_maintenance: str = "maintenance-events"
-    kafka_consumer_group: str = "foresight-streaming"
-    kafka_replication_factor: int = 1
-    kafka_num_partitions: int = 6
-
-    # --- MinIO / S3 ---
-    minio_endpoint: str = "minio:9000"
-    minio_root_user: str = "minioadmin"
-    minio_root_password: str
-    minio_bucket_raw: str = "foresight-raw"
-    minio_bucket_processed: str = "foresight-processed"
-    minio_bucket_models: str = "foresight-models"
-    aws_access_key_id: str
-    aws_secret_access_key: str
-    aws_endpoint_url: str = "http://minio:9000"
-    aws_default_region: str = "us-east-1"
-
-    # --- Spark ---
-    spark_master_url: str = "spark://spark-master:7077"
-    spark_driver_memory: str = "1g"
-    spark_executor_memory: str = "1g"
-
-    # --- MLflow ---
-    mlflow_tracking_uri: str = "http://mlflow:5000"
-    mlflow_artifact_store: str = "s3://foresight-models/mlflow"
-    mlflow_backend_store_uri: str
-
-    # --- FastAPI / Auth ---
-    api_host: str = "0.0.0.0"
-    api_port: int = 8000
-    api_workers: int = 4
-    jwt_secret_key: str
-    jwt_algorithm: str = "HS256"
-    jwt_access_token_expire_minutes: int = 60
-    jwt_refresh_token_expire_days: int = 7
-    cors_origins: str = "http://localhost:3000"
-
-    # --- ML ---
-    model_champion_metric: str = "roc_auc"
-    model_min_improvement_threshold: float = 0.01
-    failure_prediction_window_7d: int = 7
-    failure_prediction_window_30d: int = 30
-
-    @field_validator("cors_origins", mode="before")
-    @classmethod
-    def parse_cors_origins(cls, v: str) -> str:
-        """Accept comma-separated string from env."""
+    """Application settings loaded from environment variables."""
+    
+    # =============================================================================
+    # Application
+    # =============================================================================
+    
+    APP_NAME: str = "FORESIGHT"
+    APP_VERSION: str = "1.0.0"
+    DEBUG: bool = Field(default=False)
+    ENVIRONMENT: str = Field(default="development")
+    
+    # =============================================================================
+    # Security
+    # =============================================================================
+    
+    JWT_SECRET_KEY: str = Field(default="change-me-in-production")
+    JWT_ALGORITHM: str = Field(default="HS256")
+    JWT_EXPIRATION_SECONDS: int = Field(default=3600)
+    
+    # =============================================================================
+    # Database — PostgreSQL
+    # =============================================================================
+    
+    POSTGRES_HOST: str = Field(default="localhost")
+    POSTGRES_PORT: int = Field(default=5432)
+    POSTGRES_DB: str = Field(default="foresight")
+    POSTGRES_USER: str = Field(default="foresight")
+    POSTGRES_PASSWORD: str = Field(default="foresight")
+    
+    DATABASE_URL: Optional[str] = None
+    DATABASE_URL_SYNC: Optional[str] = None
+    
+    @validator("DATABASE_URL", pre=True, always=True)
+    def assemble_database_url(cls, v, values):
+        """Build async database URL from components."""
+        if v:
+            return v
+        return (
+            f"postgresql://{values.get('POSTGRES_USER')}:{values.get('POSTGRES_PASSWORD')}"
+            f"@{values.get('POSTGRES_HOST')}:{values.get('POSTGRES_PORT')}"
+            f"/{values.get('POSTGRES_DB')}"
+        )
+    
+    @validator("DATABASE_URL_SYNC", pre=True, always=True)
+    def assemble_sync_database_url(cls, v, values):
+        """Build sync database URL from components."""
+        if v:
+            return v
+        return (
+            f"postgresql://{values.get('POSTGRES_USER')}:{values.get('POSTGRES_PASSWORD')}"
+            f"@{values.get('POSTGRES_HOST')}:{values.get('POSTGRES_PORT')}"
+            f"/{values.get('POSTGRES_DB')}"
+        )
+    
+    # =============================================================================
+    # Database — MongoDB
+    # =============================================================================
+    
+    MONGO_HOST: str = Field(default="localhost")
+    MONGO_PORT: int = Field(default=27017)
+    MONGO_DB: str = Field(default="foresight")
+    MONGO_ROOT_USER: str = Field(default="admin")
+    MONGO_ROOT_PASSWORD: str = Field(default="admin")
+    MONGO_URI: Optional[str] = None
+    
+    @validator("MONGO_URI", pre=True, always=True)
+    def assemble_mongo_uri(cls, v, values):
+        """Build MongoDB URI from components."""
+        if v:
+            return v
+        return (
+            f"mongodb://{values.get('MONGO_ROOT_USER')}:{values.get('MONGO_ROOT_PASSWORD')}"
+            f"@{values.get('MONGO_HOST')}:{values.get('MONGO_PORT')}"
+        )
+    
+    # =============================================================================
+    # Message Queue — Kafka
+    # =============================================================================
+    
+    KAFKA_BOOTSTRAP_SERVERS: str = Field(default="localhost:29092")
+    KAFKA_TOPIC_SENSOR_READINGS: str = Field(default="sensor_readings")
+    KAFKA_TOPIC_ALERTS: str = Field(default="alerts")
+    
+    # =============================================================================
+    # Object Storage — MinIO / S3
+    # =============================================================================
+    
+    MINIO_HOST: str = Field(default="localhost")
+    MINIO_PORT: int = Field(default=9000)
+    MINIO_ROOT_USER: str = Field(default="minioadmin")
+    MINIO_ROOT_PASSWORD: str = Field(default="minioadmin")
+    MINIO_BUCKET_RAW: str = Field(default="foresight-raw")
+    MINIO_BUCKET_PROCESSED: str = Field(default="foresight-processed")
+    MINIO_BUCKET_MODELS: str = Field(default="foresight-models")
+    
+    AWS_ACCESS_KEY_ID: str = Field(default="minioadmin")
+    AWS_SECRET_ACCESS_KEY: str = Field(default="minioadmin")
+    AWS_ENDPOINT_URL: str = Field(default="http://localhost:9000")
+    
+    @validator("AWS_ENDPOINT_URL", pre=True, always=True)
+    def assemble_endpoint_url(cls, v, values):
+        """Build MinIO endpoint URL."""
+        if v and not v.startswith("http://localhost"):
+            return v
+        return f"http://{values.get('MINIO_HOST')}:{values.get('MINIO_PORT')}"
+    
+    # =============================================================================
+    # MLflow
+    # =============================================================================
+    
+    MLFLOW_TRACKING_URI: str = Field(default="http://localhost:5000")
+    MLFLOW_BACKEND_STORE_URI: Optional[str] = None
+    MLFLOW_ARTIFACT_STORE: str = Field(default="s3://mlflow")
+    MLFLOW_S3_ENDPOINT_URL: str = Field(default="http://localhost:9000")
+    
+    @validator("MLFLOW_BACKEND_STORE_URI", pre=True, always=True)
+    def assemble_mlflow_backend(cls, v, values):
+        """Build MLflow backend URI."""
+        if v:
+            return v
+        return (
+            f"postgresql://{values.get('POSTGRES_USER')}:{values.get('POSTGRES_PASSWORD')}"
+            f"@{values.get('POSTGRES_HOST')}:{values.get('POSTGRES_PORT')}"
+            f"/{values.get('POSTGRES_DB')}"
+        )
+    
+    # =============================================================================
+    # Apache Airflow
+    # =============================================================================
+    
+    AIRFLOW__CORE__SQL_ALCHEMY_CONN: Optional[str] = None
+    AIRFLOW__CORE__FERNET_KEY: str = Field(default="")
+    AIRFLOW__WEBSERVER__SECRET_KEY: str = Field(default="foresight-secret-key")
+    AIRFLOW_ADMIN_USERNAME: str = Field(default="admin")
+    AIRFLOW_ADMIN_PASSWORD: str = Field(default="admin")
+    AIRFLOW_ADMIN_EMAIL: str = Field(default="admin@assetpulse.local")
+    AIRFLOW__LOGGING__LOGGING_LEVEL: str = Field(default="INFO")
+    
+    @validator("AIRFLOW__CORE__SQL_ALCHEMY_CONN", pre=True, always=True)
+    def assemble_airflow_db(cls, v, values):
+        """Build Airflow database connection."""
+        if v:
+            return v
+        return (
+            f"postgresql+psycopg2://{values.get('POSTGRES_USER')}:{values.get('POSTGRES_PASSWORD')}"
+            f"@{values.get('POSTGRES_HOST')}:{values.get('POSTGRES_PORT')}"
+            f"/{values.get('POSTGRES_DB')}"
+        )
+    
+    # =============================================================================
+    # Spark
+    # =============================================================================
+    
+    SPARK_MASTER_URL: str = Field(default="spark://spark-master:7077")
+    SPARK_WORKER_MEMORY: str = Field(default="2g")
+    SPARK_WORKER_CORES: int = Field(default=2)
+    
+    # =============================================================================
+    # CORS
+    # =============================================================================
+    
+    CORS_ORIGINS: List[str] = Field(default=["http://localhost:5173", "http://localhost:3000"])
+    
+    @validator("CORS_ORIGINS", pre=True)
+    def parse_cors_origins(cls, v):
+        """Parse CORS origins from string."""
+        if isinstance(v, str):
+            return [origin.strip() for origin in v.split(",")]
         return v
+    
+    # =============================================================================
+    # Logging
+    # =============================================================================
+    
+    LOG_LEVEL: str = Field(default="INFO")
+    LOG_FORMAT: str = Field(default="json")
+    
+    # =============================================================================
+    # Feature Engineering
+    # =============================================================================
+    
+    FEATURE_STORE_TABLE: str = Field(default="feature_store")
+    FEATURE_LOOKBACK_DAYS: int = Field(default=90)
+    
+    # =============================================================================
+    # Model Serving
+    # =============================================================================
+    
+    MODEL_PATH: str = Field(default="/app/ml/models/champion_model.pkl")
+    MODEL_CACHE_TTL: int = Field(default=300)  # 5 minutes
+    
+    class Config:
+        env_file = ".env"
+        env_file_encoding = "utf-8"
+        case_sensitive = True
+        extra = "ignore"
 
-    @property
-    def cors_origins_list(self) -> List[str]:
-        """Return CORS origins as a list for FastAPI middleware."""
-        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
-    @property
-    def is_production(self) -> bool:
-        """True when running in production environment."""
-        return self.environment.lower() == "production"
-
-    @property
-    def is_development(self) -> bool:
-        """True when running in development environment."""
-        return self.environment.lower() == "development"
+# Global settings instance
+settings = Settings()
 
 
-@lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    """
-    Return a cached Settings singleton.
-
-    Using lru_cache ensures environment variables are read once at startup.
-    Call get_settings() everywhere — do not instantiate Settings() directly.
-    """
-    return Settings()
+    """Get application settings."""
+    return settings

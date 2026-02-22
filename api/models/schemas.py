@@ -1,436 +1,697 @@
-"""
-FORESIGHT — FastAPI Request/Response Pydantic Schemas
-
-All API request and response models.
-These are separate from common/models.py (which are internal domain models)
-to allow API contract evolution independently of the pipeline data models.
-"""
-
-from __future__ import annotations
-
-from datetime import date, datetime
-from typing import Any, Dict, List, Optional
-
-from pydantic import BaseModel, Field, field_validator
-
 # =============================================================================
-# Auth
+# FORESIGHT API — Pydantic Schemas
+# Request/Response models for all endpoints
 # =============================================================================
 
+from datetime import datetime, date
+from decimal import Decimal
+from enum import Enum
+from typing import Optional, List, Dict, Any, Union
+from uuid import UUID
 
-class TokenRequest(BaseModel):
-    """POST /auth/token request body."""
-
-    client_id: str = Field(..., description="Tenant client ID")
-    client_secret: str = Field(..., description="Tenant client secret")
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 
 
-class TokenResponse(BaseModel):
-    """POST /auth/token response."""
+# =============================================================================
+# Enums
+# =============================================================================
 
+class UserRole(str, Enum):
+    ADMIN = "admin"
+    ANALYST = "analyst"
+    OPERATOR = "operator"
+    VIEWER = "viewer"
+
+
+class AssetStatus(str, Enum):
+    OPERATIONAL = "operational"
+    MAINTENANCE = "maintenance"
+    DECOMMISSIONED = "decommissioned"
+    STANDBY = "standby"
+
+
+class CriticalityLevel(str, Enum):
+    CRITICAL = "critical"
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+
+class AlertSeverity(str, Enum):
+    INFO = "info"
+    WARNING = "warning"
+    CRITICAL = "critical"
+    EMERGENCY = "emergency"
+
+
+class AlertStatus(str, Enum):
+    OPEN = "open"
+    ACKNOWLEDGED = "acknowledged"
+    RESOLVED = "resolved"
+    IGNORED = "ignored"
+
+
+class MaintenanceType(str, Enum):
+    PREVENTIVE = "preventive"
+    CORRECTIVE = "corrective"
+    PREDICTIVE = "predictive"
+    INSPECTION = "inspection"
+
+
+class RiskLevel(str, Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
+
+
+# =============================================================================
+# Base Models
+# =============================================================================
+
+class TimestampedModel(BaseModel):
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class TenantAwareModel(BaseModel):
+    tenant_id: UUID
+
+
+# =============================================================================
+# Auth Schemas
+# =============================================================================
+
+class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"
-    expires_in: int = Field(..., description="Token lifetime in seconds")
-    tenant_id: str
+    expires_in: int = 3600
+    tenant_id: UUID
+    user_role: str
 
 
-# =============================================================================
-# Assets
-# =============================================================================
+class TokenData(BaseModel):
+    user_id: Optional[UUID] = None
+    tenant_id: Optional[UUID] = None
+    email: Optional[str] = None
+    role: Optional[str] = None
 
 
-class HealthScoreSummary(BaseModel):
-    """Embedded health score for the asset list view."""
+class UserLogin(BaseModel):
+    email: str
+    password: str
 
-    health_score: Optional[float] = None
-    failure_prob_7d: Optional[float] = None
-    failure_prob_30d: Optional[float] = None
-    score_date: Optional[date] = None
-    risk_level: Optional[str] = None  # low | medium | high | critical
 
+class UserCreate(BaseModel):
+    email: str
+    password: str = Field(..., min_length=8)
+    full_name: str
+    role: UserRole = UserRole.ANALYST
 
-class AssetResponse(BaseModel):
-    """GET /assets/{tenant_id} — single asset in list."""
 
-    asset_id: str
-    tenant_id: str
-    name: str
-    asset_type: str
-    location: Optional[str] = None
-    criticality: str
-    installed_date: Optional[date] = None
-    source_system: Optional[str] = None
-    current_health: Optional[HealthScoreSummary] = None
-    is_active: bool = True
+class UserResponse(BaseModel, TimestampedModel):
+    model_config = ConfigDict(from_attributes=True)
+    
+    id: UUID
+    tenant_id: UUID
+    email: str
+    full_name: str
+    role: str
+    is_active: bool
+    last_login: Optional[datetime] = None
 
-    model_config = {"from_attributes": True}
 
-
-class AssetListResponse(BaseModel):
-    """GET /assets/{tenant_id} response envelope."""
-
-    tenant_id: str
-    total: int
-    assets: List[AssetResponse]
-
-
-class PredictionHistoryEntry(BaseModel):
-    """One row of prediction history for an asset detail view."""
-
-    score_date: date
-    health_score: float
-    failure_prob_7d: float
-    failure_prob_30d: float
-    model_version: str
-
-
-class AssetDetailResponse(AssetResponse):
-    """GET /assets/{tenant_id}/{asset_id} — full asset detail."""
-
-    prediction_history: List[PredictionHistoryEntry] = Field(default_factory=list)
-    recent_alerts_count: int = 0
-    last_maintenance_date: Optional[datetime] = None
-    total_maintenance_cost_90d: Optional[float] = None
-
-
-# =============================================================================
-# Predictions
-# =============================================================================
-
-
-class PredictionRequest(BaseModel):
-    """POST /predict request body."""
-
-    asset_id: str = Field(..., description="Asset UUID")
-    tenant_id: str = Field(..., description="Tenant UUID — must match JWT token tenant")
-
-    # Optional pre-computed features (if caller has them already)
-    features: Optional[Dict[str, float]] = Field(
-        None,
-        description="Pre-computed feature values. If None, loaded from feature store.",
-    )
-
-
-class TopFeature(BaseModel):
-    """A single contributing feature in a prediction."""
-
-    feature: str
-    importance: float
-    value: float
-
-
-class PredictionResponse(BaseModel):
-    """POST /predict response."""
-
-    asset_id: str
-    tenant_id: str
-    predicted_at: datetime
-    failure_prob_7d: float = Field(..., description="Probability of failure within 7 days (0–1)")
-    failure_prob_30d: float = Field(..., description="Probability of failure within 30 days (0–1)")
-    health_score: float = Field(..., description="Composite health score (0=critical, 100=perfect)")
-    confidence_lower: float
-    confidence_upper: float
-    risk_level: str = Field(..., description="low | medium | high | critical")
-    top_3_features: List[TopFeature]
-    model_version: str
-    model_name: str = "foresight-failure-predictor"
-
-    @classmethod
-    def from_prediction_result(cls, result: "PredictionResult") -> "PredictionResponse":  # noqa: F821,E501
-        """Convert from internal PredictionResult to API response schema."""
-        prob_30d = result.failure_prob_30d
-        risk = (
-            "critical"
-            if prob_30d > 0.70
-            else "high" if prob_30d > 0.40 else "medium" if prob_30d > 0.15 else "low"
-        )
-        return cls(
-            asset_id=result.asset_id,
-            tenant_id=result.tenant_id,
-            predicted_at=result.predicted_at,
-            failure_prob_7d=result.failure_prob_7d,
-            failure_prob_30d=result.failure_prob_30d,
-            health_score=result.health_score,
-            confidence_lower=result.confidence_lower,
-            confidence_upper=result.confidence_upper,
-            risk_level=risk,
-            top_3_features=[TopFeature(**f) for f in result.top_3_features],
-            model_version=result.model_version,
-        )
-
-
-# =============================================================================
-# Alerts
-# =============================================================================
-
-
-class AlertResponse(BaseModel):
-    """Single alert in the alert feed."""
-
-    alert_id: str
-    asset_id: str
-    tenant_id: str
-    rule_id: Optional[str] = None
-    alert_type: str
-    metric_name: str
-    actual_value: Optional[float] = None
-    threshold_value: Optional[float] = None
-    severity: str
-    status: str
-    triggered_at: datetime
-    acknowledged_at: Optional[datetime] = None
-    resolved_at: Optional[datetime] = None
-    acknowledged_by: Optional[str] = None
-    notes: Optional[str] = None
-
-    model_config = {"from_attributes": True}
-
-
-class AlertUpdateRequest(BaseModel):
-    """PATCH /alerts/{tenant_id}/{alert_id} request."""
-
-    status: str = Field(..., pattern="^(acknowledged|resolved)$")
-    notes: Optional[str] = None
-
-
-class AlertListResponse(BaseModel):
-    """GET /alerts/{tenant_id} response."""
-
-    tenant_id: str
-    total: int
-    alerts: List[AlertResponse]
-
-
-# =============================================================================
-# Threshold Rules
-# =============================================================================
-
-
-class ThresholdRuleRequest(BaseModel):
-    """POST /rules/{tenant_id} request body — create or update a rule."""
-
-    metric_name: str = Field(..., description="temperature | vibration | pressure | rpm")
-    operator: str = Field(..., pattern="^(gt|lt|gte|lte|eq)$")
-    threshold_value: float
-    severity: str = Field(..., pattern="^(low|medium|high|critical)$")
-    asset_type: Optional[str] = Field(None, description="None = applies to all asset types")
-    description: Optional[str] = None
-    active: bool = True
-
-    @field_validator("threshold_value")
-    @classmethod
-    def threshold_must_be_positive(cls, v: float) -> float:
-        """Threshold values must be positive."""
-        if v < 0:
-            raise ValueError("threshold_value must be >= 0")
-        return v
-
-
-class ThresholdRuleResponse(BaseModel):
-    """GET /rules/{tenant_id} — single rule in list."""
-
-    rule_id: str
-    tenant_id: str
-    metric_name: str
-    operator: str
-    threshold_value: float
-    severity: str
-    asset_type: Optional[str] = None
-    description: Optional[str] = None
-    active: bool
-    created_at: datetime
-
-    model_config = {"from_attributes": True}
-
-
-class RuleListResponse(BaseModel):
-    """GET /rules/{tenant_id} response."""
-
-    tenant_id: str
-    total: int
-    rules: List[ThresholdRuleResponse]
-
-
-# =============================================================================
-# Alert Rules (new detailed schemas for /rules router)
-# =============================================================================
-
-
-class AlertRuleCreate(BaseModel):
-    """POST /rules/{tenant_id} — create a new alert rule."""
-
-    name: str = Field(..., description="Human-readable rule name")
-    description: Optional[str] = None
-    asset_type: Optional[str] = Field(None, description="Filter to asset type, or None for all")
-    metric: str = Field(..., description="Sensor metric (e.g. vibration_rms, bearing_temp_celsius)")
-    operator: str = Field(..., pattern="^(gt|lt|gte|lte|eq)$", description="Comparison operator")
-    threshold: float = Field(..., ge=0, description="Threshold value for the metric")
-    severity: str = Field(..., pattern="^(low|medium|high|critical)$")
-
-    @field_validator("threshold")
-    @classmethod
-    def threshold_must_be_non_negative(cls, v: float) -> float:
-        if v < 0:
-            raise ValueError("threshold must be >= 0")
-        return v
-
-
-class AlertRuleUpdate(BaseModel):
-    """PUT /rules/{tenant_id}/{rule_id} — partial update (all fields optional)."""
-
-    name: Optional[str] = None
-    description: Optional[str] = None
-    asset_type: Optional[str] = None
-    metric: Optional[str] = None
-    operator: Optional[str] = Field(None, pattern="^(gt|lt|gte|lte|eq)$")
-    threshold: Optional[float] = Field(None, ge=0)
-    severity: Optional[str] = Field(None, pattern="^(low|medium|high|critical)$")
+class UserUpdate(BaseModel):
+    full_name: Optional[str] = None
+    role: Optional[UserRole] = None
     is_active: Optional[bool] = None
 
 
-class AlertRuleResponse(BaseModel):
-    """Response schema for a single alert rule."""
+# =============================================================================
+# Tenant Schemas
+# =============================================================================
 
-    id: str
-    tenant_id: str
+class TenantCreate(BaseModel):
+    name: str
+    slug: str = Field(..., pattern=r"^[a-z0-9-]+$")
+    description: Optional[str] = None
+    contact_email: Optional[str] = None
+    settings: Optional[Dict[str, Any]] = None
+
+
+class TenantResponse(BaseModel, TimestampedModel):
+    model_config = ConfigDict(from_attributes=True)
+    
+    id: UUID
+    name: str
+    slug: str
+    description: Optional[str] = None
+    contact_email: Optional[str] = None
+    settings: Dict[str, Any] = {}
+    is_active: bool
+
+
+# =============================================================================
+# Asset Schemas
+# =============================================================================
+
+class AssetCreate(BaseModel):
+    asset_id: str = Field(..., description="External asset ID from SAP/Asset Suite")
     name: str
     description: Optional[str] = None
+    asset_type: str = Field(..., description="pump, motor, turbine, compressor, etc.")
+    category: Optional[str] = None
+    manufacturer: Optional[str] = None
+    model: Optional[str] = None
+    serial_number: Optional[str] = None
+    location: Optional[str] = None
+    department: Optional[str] = None
+    criticality: CriticalityLevel = CriticalityLevel.MEDIUM
+    install_date: Optional[date] = None
+    purchase_cost: Optional[Decimal] = None
+    status: AssetStatus = AssetStatus.OPERATIONAL
+    parent_asset_id: Optional[UUID] = None
+    sap_equipment_number: Optional[str] = None
+    asset_suite_id: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class AssetResponse(BaseModel, TimestampedModel):
+    model_config = ConfigDict(from_attributes=True)
+    
+    id: UUID
+    tenant_id: UUID
+    asset_id: str
+    name: str
+    description: Optional[str] = None
+    asset_type: str
+    category: Optional[str] = None
+    manufacturer: Optional[str] = None
+    model: Optional[str] = None
+    serial_number: Optional[str] = None
+    location: Optional[str] = None
+    department: Optional[str] = None
+    criticality: str
+    install_date: Optional[date] = None
+    purchase_cost: Optional[Decimal] = None
+    status: str
+    parent_asset_id: Optional[UUID] = None
+    sap_equipment_number: Optional[str] = None
+    asset_suite_id: Optional[str] = None
+    metadata: Dict[str, Any] = {}
+    
+    # Enriched fields
+    sensor_count: Optional[int] = None
+    health_score: Optional[Decimal] = None
+    open_alerts: Optional[int] = None
+
+
+class AssetUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
     asset_type: Optional[str] = None
+    category: Optional[str] = None
+    manufacturer: Optional[str] = None
+    model: Optional[str] = None
+    serial_number: Optional[str] = None
+    location: Optional[str] = None
+    department: Optional[str] = None
+    criticality: Optional[CriticalityLevel] = None
+    install_date: Optional[date] = None
+    purchase_cost: Optional[Decimal] = None
+    status: Optional[AssetStatus] = None
+    parent_asset_id: Optional[UUID] = None
+    sap_equipment_number: Optional[str] = None
+    asset_suite_id: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class AssetListResponse(BaseModel):
+    total: int
+    items: List[AssetResponse]
+    page: int
+    page_size: int
+
+
+# =============================================================================
+# Sensor Schemas
+# =============================================================================
+
+class SensorCreate(BaseModel):
+    sensor_id: str
+    asset_id: UUID
+    name: str
+    sensor_type: str = Field(..., description="vibration, temperature, pressure, flow, etc.")
+    unit: Optional[str] = None
+    sampling_rate: int = 60
+    min_threshold: Optional[Decimal] = None
+    max_threshold: Optional[Decimal] = None
+    calibration_date: Optional[date] = None
+    location_on_asset: Optional[str] = None
+    kafka_topic: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class SensorResponse(BaseModel, TimestampedModel):
+    model_config = ConfigDict(from_attributes=True)
+    
+    id: UUID
+    tenant_id: UUID
+    sensor_id: str
+    asset_id: UUID
+    name: str
+    sensor_type: str
+    unit: Optional[str] = None
+    sampling_rate: int
+    min_threshold: Optional[Decimal] = None
+    max_threshold: Optional[Decimal] = None
+    calibration_date: Optional[date] = None
+    location_on_asset: Optional[str] = None
+    is_active: bool
+    kafka_topic: Optional[str] = None
+    metadata: Dict[str, Any] = {}
+    
+    # Enriched
+    latest_reading: Optional[Decimal] = None
+    latest_reading_at: Optional[datetime] = None
+
+
+class SensorUpdate(BaseModel):
+    name: Optional[str] = None
+    asset_id: Optional[UUID] = None
+    sensor_type: Optional[str] = None
+    unit: Optional[str] = None
+    sampling_rate: Optional[int] = None
+    min_threshold: Optional[Decimal] = None
+    max_threshold: Optional[Decimal] = None
+    calibration_date: Optional[date] = None
+    location_on_asset: Optional[str] = None
+    is_active: Optional[bool] = None
+    kafka_topic: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+# =============================================================================
+# Alert Rule Schemas
+# =============================================================================
+
+class AlertRuleCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+    asset_id: Optional[UUID] = None  # NULL = all assets
+    sensor_type: Optional[str] = None  # NULL = all sensor types
+    metric: str = Field(..., description="temperature, vibration_x, pressure, etc.")
+    operator: str = Field(..., pattern=r"^(>|>=|<|<=|==|between)$")
+    threshold_value: Decimal
+    threshold_value_high: Optional[Decimal] = None  # For 'between' operator
+    duration_seconds: int = 0
+    severity: AlertSeverity = AlertSeverity.WARNING
+    auto_create_work_order: bool = False
+    notification_channels: List[str] = []
+    cooldown_minutes: int = 30
+
+
+class AlertRuleResponse(BaseModel, TimestampedModel):
+    model_config = ConfigDict(from_attributes=True)
+    
+    id: UUID
+    tenant_id: UUID
+    name: str
+    description: Optional[str] = None
+    asset_id: Optional[UUID] = None
+    sensor_type: Optional[str] = None
     metric: str
     operator: str
-    threshold: float
+    threshold_value: Decimal
+    threshold_value_high: Optional[Decimal] = None
+    duration_seconds: int
     severity: str
     is_active: bool
-    created_at: Optional[datetime] = None
+    auto_create_work_order: bool
+    notification_channels: List[str] = []
+    cooldown_minutes: int
+    created_by: Optional[UUID] = None
 
-    model_config = {"from_attributes": True}
+
+class AlertRuleUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    asset_id: Optional[UUID] = None
+    sensor_type: Optional[str] = None
+    metric: Optional[str] = None
+    operator: Optional[str] = Field(None, pattern=r"^(>|>=|<|<=|==|between)$")
+    threshold_value: Optional[Decimal] = None
+    threshold_value_high: Optional[Decimal] = None
+    duration_seconds: Optional[int] = None
+    severity: Optional[AlertSeverity] = None
+    is_active: Optional[bool] = None
+    auto_create_work_order: Optional[bool] = None
+    notification_channels: Optional[List[str]] = None
+    cooldown_minutes: Optional[int] = None
 
 
 # =============================================================================
-# Report Schemas (new detailed schemas for /reports router)
+# Alert Schemas
 # =============================================================================
 
-
-class FleetSummaryResponse(BaseModel):
-    """GET /reports/{tenant_id}/summary — fleet KPI dashboard."""
-
-    tenant_id: str
-    total_assets: int
-    active_assets: int
-    critical_alerts: int
-    high_alerts: int
-    medium_alerts: int
-    low_alerts: int
-    assets_at_risk: int
-    fleet_health_score: float = Field(..., description="Fleet health 0–100")
-    as_of: datetime
+class AlertCreate(BaseModel):
+    rule_id: Optional[UUID] = None
+    asset_id: UUID
+    sensor_id: Optional[UUID] = None
+    alert_type: str = Field(..., pattern=r"^(threshold|anomaly|prediction)$")
+    severity: AlertSeverity
+    title: str
+    description: Optional[str] = None
+    metric_name: Optional[str] = None
+    metric_value: Optional[Decimal] = None
+    threshold_value: Optional[Decimal] = None
+    metadata: Optional[Dict[str, Any]] = None
 
 
-class AssetHealthSummary(BaseModel):
-    """GET /reports/{tenant_id}/asset/{asset_id} — single asset maintenance report."""
-
-    asset_id: str
-    asset_name: str
-    asset_type: str
-    tenant_id: str
-    health_score: float
+class AlertResponse(BaseModel, TimestampedModel):
+    model_config = ConfigDict(from_attributes=True)
+    
+    id: UUID
+    tenant_id: UUID
+    rule_id: Optional[UUID] = None
+    asset_id: UUID
+    sensor_id: Optional[UUID] = None
+    alert_type: str
+    severity: str
     status: str
-    failure_probability_30d: float
-    days_to_maintenance: Optional[int] = None
-    open_alert_count: int
-    alert_summary: List[Dict[str, Any]] = Field(default_factory=list)
-    last_updated: datetime
+    title: str
+    description: Optional[str] = None
+    metric_name: Optional[str] = None
+    metric_value: Optional[Decimal] = None
+    threshold_value: Optional[Decimal] = None
+    started_at: datetime
+    acknowledged_at: Optional[datetime] = None
+    acknowledged_by: Optional[UUID] = None
+    resolved_at: Optional[datetime] = None
+    resolved_by: Optional[UUID] = None
+    resolution_notes: Optional[str] = None
+    metadata: Dict[str, Any] = {}
+    
+    # Enriched
+    asset_name: Optional[str] = None
+    sensor_name: Optional[str] = None
+    acknowledged_by_name: Optional[str] = None
 
 
-class TrendDataPoint(BaseModel):
-    """One data point in a time-series trend response."""
+class AlertUpdate(BaseModel):
+    status: Optional[AlertStatus] = None
+    resolution_notes: Optional[str] = None
 
-    date: str  # YYYY-MM-DD
+
+class AlertAcknowledgeRequest(BaseModel):
+    notes: Optional[str] = None
+
+
+class AlertResolveRequest(BaseModel):
+    resolution_notes: Optional[str] = None
+
+
+class AlertListResponse(BaseModel):
+    total: int
+    items: List[AlertResponse]
+    page: int
+    page_size: int
+    
+    # Summary stats
+    open_count: int = 0
+    critical_count: int = 0
+    warning_count: int = 0
+
+
+class AlertStats(BaseModel):
+    total_alerts: int
+    open_alerts: int
+    acknowledged_alerts: int
+    resolved_alerts: int
+    critical_count: int
+    warning_count: int
+    info_count: int
+    avg_resolution_hours: Optional[float] = None
+
+
+# =============================================================================
+# Maintenance Schemas
+# =============================================================================
+
+class MaintenanceRecordCreate(BaseModel):
+    asset_id: UUID
+    work_order_number: Optional[str] = None
+    record_type: MaintenanceType
+    title: str
+    description: Optional[str] = None
+    status: str = "scheduled"
+    priority: str = "medium"
+    scheduled_date: Optional[datetime] = None
+    started_date: Optional[datetime] = None
+    completed_date: Optional[datetime] = None
+    technician_name: Optional[str] = None
+    technician_id: Optional[str] = None
+    cost_parts: Optional[Decimal] = None
+    cost_labor: Optional[Decimal] = None
+    cost_total: Optional[Decimal] = None
+    downtime_hours: Optional[Decimal] = None
+    parts_replaced: List[Dict[str, Any]] = []
+    findings: Optional[str] = None
+    recommendations: Optional[str] = None
+    sap_notification_number: Optional[str] = None
+    asset_suite_work_order_id: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class MaintenanceRecordResponse(BaseModel, TimestampedModel):
+    model_config = ConfigDict(from_attributes=True)
+    
+    id: UUID
+    tenant_id: UUID
+    asset_id: UUID
+    work_order_number: Optional[str] = None
+    record_type: str
+    title: str
+    description: Optional[str] = None
+    status: str
+    priority: str
+    scheduled_date: Optional[datetime] = None
+    started_date: Optional[datetime] = None
+    completed_date: Optional[datetime] = None
+    technician_name: Optional[str] = None
+    technician_id: Optional[str] = None
+    cost_parts: Optional[Decimal] = None
+    cost_labor: Optional[Decimal] = None
+    cost_total: Optional[Decimal] = None
+    downtime_hours: Optional[Decimal] = None
+    parts_replaced: List[Dict[str, Any]] = []
+    findings: Optional[str] = None
+    recommendations: Optional[str] = None
+    sap_notification_number: Optional[str] = None
+    asset_suite_work_order_id: Optional[str] = None
+    metadata: Dict[str, Any] = {}
+    
+    # Enriched
+    asset_name: Optional[str] = None
+
+
+class MaintenanceRecordUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    status: Optional[str] = None
+    priority: Optional[str] = None
+    scheduled_date: Optional[datetime] = None
+    started_date: Optional[datetime] = None
+    completed_date: Optional[datetime] = None
+    technician_name: Optional[str] = None
+    cost_parts: Optional[Decimal] = None
+    cost_labor: Optional[Decimal] = None
+    cost_total: Optional[Decimal] = None
+    downtime_hours: Optional[Decimal] = None
+    findings: Optional[str] = None
+    recommendations: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+# =============================================================================
+# Health Score Schemas
+# =============================================================================
+
+class HealthScoreResponse(BaseModel, TimestampedModel):
+    model_config = ConfigDict(from_attributes=True)
+    
+    id: UUID
+    tenant_id: UUID
+    asset_id: UUID
+    score: Decimal = Field(..., ge=0, le=100)
+    predicted_failure_probability: Optional[Decimal] = None
+    predicted_failure_date: Optional[date] = None
+    risk_level: Optional[str] = None
+    model_version: Optional[str] = None
+    features_used: Optional[Dict[str, Any]] = None
+    top_contributing_features: Optional[List[Dict[str, Any]]] = None
+    recommendation: Optional[str] = None
+    computed_at: datetime
+    valid_until: Optional[datetime] = None
+    
+    # Enriched
+    asset_name: Optional[str] = None
+    asset_type: Optional[str] = None
+
+
+class HealthScoreHistory(BaseModel):
+    asset_id: UUID
+    asset_name: str
+    scores: List[Dict[str, Any]]  # {date, score, risk_level}
+
+
+class FleetHealthSummary(BaseModel):
+    total_assets: int
+    healthy_count: int  # score >= 80
+    at_risk_count: int  # 50 <= score < 80
+    critical_count: int  # score < 50
+    average_score: float
+    assets_needing_attention: List[HealthScoreResponse] = []
+
+
+# =============================================================================
+# Prediction Schemas
+# =============================================================================
+
+class PredictionRequest(BaseModel):
+    asset_id: UUID
+    features: Optional[Dict[str, float]] = None  # If None, fetch from feature store
+
+
+class PredictionResponse(BaseModel):
+    asset_id: UUID
+    health_score: Decimal
+    failure_probability: Decimal
+    risk_level: RiskLevel
+    confidence: Decimal
+    predicted_failure_date: Optional[date] = None
+    recommendation: str
+    model_version: str
+    feature_contributions: Optional[List[Dict[str, Any]]] = None
+    computed_at: datetime
+
+
+class BatchPredictionRequest(BaseModel):
+    asset_ids: List[UUID]
+
+
+class BatchPredictionResponse(BaseModel):
+    predictions: List[PredictionResponse]
+    failed_assets: List[Dict[str, str]] = []  # asset_id, error
+
+
+# =============================================================================
+# Sensor Reading Schemas (MongoDB)
+-- =============================================================================
+
+class SensorReading(BaseModel):
+    timestamp: datetime
+    tenant_id: UUID
+    asset_id: str
+    sensor_id: str
+    sensor_type: str
+    value: Decimal
+    unit: Optional[str] = None
+    quality: str = "good"
+    
+
+class SensorReadingQuery(BaseModel):
+    asset_id: Optional[str] = None
+    sensor_id: Optional[str] = None
+    sensor_type: Optional[str] = None
+    start_time: Optional[datetime] = None
+    end_time: Optional[datetime] = None
+    limit: int = Field(default=1000, le=10000)
+
+
+class SensorAggregation(BaseModel):
+    window_start: datetime
+    window_end: datetime
+    tenant_id: UUID
+    asset_id: str
+    sensor_type: str
+    readings_count: int
     avg_value: float
-    max_value: float
     min_value: float
-    reading_count: int
+    max_value: float
+    std_dev: Optional[float] = None
 
 
-class TrendResponse(BaseModel):
-    """GET /reports/{tenant_id}/trends response."""
+# =============================================================================
+# Report Schemas
+# =============================================================================
 
-    tenant_id: str
-    metric: str
-    days: int
-    data_points: List[TrendDataPoint]
+class ReportSummary(BaseModel):
+    total_assets: int
+    operational_assets: int
+    assets_in_maintenance: int
+    total_sensors: int
+    active_alerts: int
+    critical_alerts: int
+    avg_health_score: float
+    maintenance_this_month: int
+    upcoming_maintenance: int
+
+
+class AssetTrend(BaseModel):
+    date: date
+    avg_health_score: float
+    alert_count: int
+    maintenance_count: int
 
 
 class CostAvoidanceReport(BaseModel):
-    """GET /reports/{tenant_id}/cost-avoidance response."""
-
-    tenant_id: str
-    year: int
-    total_predicted_failures: int
-    estimated_cost_avoided_usd: float
-    actual_maintenance_cost_usd: float
-    roi_percent: float
-    breakdown_by_severity: Dict[str, int]
-    generated_at: datetime
+    predicted_failures_prevented: int
+    estimated_cost_avoided: Decimal
+    actual_maintenance_cost: Decimal
+    roi_percentage: float
+    period_start: date
+    period_end: date
 
 
-# =============================================================================
-# Reports (legacy metadata schemas)
-# =============================================================================
-
-
-class ReportMetadata(BaseModel):
-    """Metadata about a generated report."""
-
-    report_id: str
-    tenant_id: str
-    report_type: str
-    format: str
-    generated_at: datetime
-    file_size_bytes: Optional[int] = None
-    download_url: Optional[str] = None
-    status: str = "ready"
-
-
-class ReportListResponse(BaseModel):
-    """GET /reports/{tenant_id} response."""
-
-    tenant_id: str
-    total: int
-    reports: List[ReportMetadata]
-
-
-class GenerateReportRequest(BaseModel):
-    """POST /reports/{tenant_id}/generate request."""
-
-    report_type: str = Field(
-        "asset_health",
-        description="asset_health | alerts_summary | maintenance_forecast | executive",
-    )
-    format: str = Field("excel", pattern="^(excel|pdf)$")
-    date_from: Optional[date] = None
-    date_to: Optional[date] = None
+class ReportFilters(BaseModel):
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+    asset_types: Optional[List[str]] = None
+    departments: Optional[List[str]] = None
 
 
 # =============================================================================
-# System Health
+# Dashboard Schemas
 # =============================================================================
 
+class DashboardSummary(BaseModel):
+    # Asset overview
+    total_assets: int
+    assets_by_status: Dict[str, int]
+    assets_by_criticality: Dict[str, int]
+    
+    # Alerts
+    total_open_alerts: int
+    alerts_by_severity: Dict[str, int]
+    recent_alerts: List[AlertResponse] = []
+    
+    # Health
+    fleet_health_score: float
+    health_distribution: Dict[str, int]  # healthy, at_risk, critical
+    
+    # Maintenance
+    maintenance_due_count: int
+    maintenance_overdue_count: int
+    
+    # Trends
+    health_trend: List[Dict[str, Any]] = []  # Last 30 days
+    alert_trend: List[Dict[str, Any]] = []
 
-class ServiceStatus(BaseModel):
-    """Status of a single downstream service."""
 
-    name: str
-    status: str  # healthy | degraded | unhealthy
-    latency_ms: Optional[float] = None
-    message: Optional[str] = None
-
-
-class HealthResponse(BaseModel):
-    """GET /health response."""
-
-    status: str
-    version: str
-    environment: str
-    services: List[ServiceStatus]
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+class RealtimeMetrics(BaseModel):
+    timestamp: datetime
+    readings_per_second: float
+    active_assets: int
+    current_alerts: int
+    system_health: str  # healthy, degraded, critical

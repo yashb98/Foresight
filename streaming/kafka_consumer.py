@@ -1,254 +1,329 @@
-"""
-FORESIGHT — Spark Structured Streaming: Kafka Consumer
+#!/usr/bin/env python3
+# =============================================================================
+# FORESIGHT — Spark Structured Streaming Consumer
+# Consumes sensor readings from Kafka, processes, and writes to MongoDB
+# =============================================================================
 
-Entry point for the streaming pipeline. Reads from Kafka sensor-readings topic,
-parses JSON into a typed Spark schema, applies windowed aggregations, evaluates
-threshold rules, publishes alerts, and writes results to MongoDB.
-
-Pipeline stages:
-  1. Read raw Kafka events (binary JSON)
-  2. Parse + validate against SensorReading schema
-  3. Dead-letter malformed records to MinIO
-  4. Apply 5-min / 1-hour / 24-hour windowed aggregations
-  5. Load threshold rules from PostgreSQL (refreshed every 60s)
-  6. Evaluate rules → publish alerts to Kafka
-  7. Write aggregated data to MongoDB
-
-Usage (from Spark master):
-    spark-submit \
-      --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,\
-                 org.mongodb.spark:mongo-spark-connector_2.12:10.2.1 \
-      streaming/kafka_consumer.py
-
-Or via Python directly (uses Spark local mode):
-    python streaming/kafka_consumer.py
-"""
-
-from __future__ import annotations
-
-import logging
 import os
 import sys
+import json
+import logging
+from datetime import datetime
+from typing import Dict, Any
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
-from dotenv import load_dotenv
-
-load_dotenv()
-
-from pyspark.sql import DataFrame, SparkSession
-from pyspark.sql import functions as F
-from pyspark.sql import types as T
-
-from common.logging_config import configure_logging
-from streaming.aggregations import apply_windowed_aggregations
-from streaming.alert_engine import AlertEngine
-from streaming.mongodb_sink import MongoDBSink
-from streaming.rules_loader import RulesLoader
-
-log = logging.getLogger(__name__)
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Spark schema for sensor readings (mirrors common.models.SensorReading)
-# ─────────────────────────────────────────────────────────────────────────────
-
-SENSOR_READING_SCHEMA = T.StructType(
-    [
-        T.StructField("reading_id", T.StringType(), True),
-        T.StructField("tenant_id", T.StringType(), False),
-        T.StructField("asset_id", T.StringType(), False),
-        T.StructField("timestamp", T.StringType(), True),  # parsed to TimestampType below
-        T.StructField("metric_name", T.StringType(), False),
-        T.StructField("value", T.DoubleType(), False),
-        T.StructField("unit", T.StringType(), True),
-        T.StructField("quality_flag", T.StringType(), True),
-        T.StructField("source", T.StringType(), True),
-    ]
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import (
+    col, from_json, window, avg, max, min, stddev, count,
+    current_timestamp, lit, to_timestamp, struct, when
+)
+from pyspark.sql.types import (
+    StructType, StructField, StringType, DoubleType, 
+    TimestampType, MapType
 )
 
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
-def create_spark_session() -> SparkSession:
-    """
-    Build and return a SparkSession configured for Kafka, MongoDB, and MinIO.
+# =============================================================================
+# Configuration
+# =============================================================================
 
-    Returns:
-        Active SparkSession.
-    """
-    kafka_bootstrap = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")  # noqa: F841
-    mongo_uri = os.getenv("MONGO_URI", "mongodb://root:password@mongodb:27017/foresight")
-    minio_endpoint = os.getenv("AWS_ENDPOINT_URL", "http://minio:9000")
-    spark_master = os.getenv("SPARK_MASTER_URL", "local[*]")
+KAFKA_BOOTSTRAP_SERVERS = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
+KAFKA_TOPIC = os.environ.get("KAFKA_TOPIC", "sensor_readings")
+MONGO_URI = os.environ.get("MONGO_URI", "mongodb://mongodb:27017")
+MONGO_DB = os.environ.get("MONGO_DB", "foresight")
+CHECKPOINT_LOCATION = os.environ.get("CHECKPOINT_LOCATION", "/tmp/spark-checkpoints")
 
-    spark = (
-        SparkSession.builder.appName("FORESIGHT-StreamProcessor")
-        .master(spark_master)
-        # Kafka connector
-        .config(
-            "spark.jars.packages",
-            ",".join(
-                [
-                    "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0",
-                    "org.mongodb.spark:mongo-spark-connector_2.12:10.2.1",
-                    "org.apache.hadoop:hadoop-aws:3.3.4",
-                ]
-            ),
-        )
-        # MongoDB connection
-        .config("spark.mongodb.write.connection.uri", mongo_uri)
-        .config("spark.mongodb.read.connection.uri", mongo_uri)
-        # MinIO (S3) for dead-letter queue
-        .config("spark.hadoop.fs.s3a.endpoint", minio_endpoint)
-        .config("spark.hadoop.fs.s3a.access.key", os.getenv("AWS_ACCESS_KEY_ID", "minioadmin"))
-        .config("spark.hadoop.fs.s3a.secret.key", os.getenv("AWS_SECRET_ACCESS_KEY", ""))
-        .config("spark.hadoop.fs.s3a.path.style.access", "true")
-        .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
-        # Streaming configuration
-        .config("spark.sql.streaming.checkpointLocation", "/tmp/spark-checkpoints/foresight")
-        .config("spark.sql.shuffle.partitions", "6")
-        .config("spark.streaming.backpressure.enabled", "true")
+# =============================================================================
+# Schema Definitions
+# =============================================================================
+
+# Schema for incoming sensor readings
+sensor_reading_schema = StructType([
+    StructField("timestamp", TimestampType(), True),
+    StructField("tenant_id", StringType(), True),
+    StructField("asset_id", StringType(), True),
+    StructField("sensor_id", StringType(), True),
+    StructField("sensor_type", StringType(), True),
+    StructField("value", DoubleType(), True),
+    StructField("unit", StringType(), True),
+    StructField("quality", StringType(), True),
+])
+
+# =============================================================================
+# Spark Session
+# =============================================================================
+
+def create_spark_session(app_name: str = "ForesightStreaming") -> SparkSession:
+    """Create Spark session with required configurations."""
+    return SparkSession.builder \
+        .appName(app_name) \
+        .config("spark.sql.streaming.checkpointLocation", CHECKPOINT_LOCATION) \
+        .config("spark.mongodb.output.uri", MONGO_URI) \
+        .config("spark.mongodb.output.database", MONGO_DB) \
+        .config("spark.jars.packages", "org.apache.spark:spark-sql-kafka-0-10_2.12:3.4.0") \
         .getOrCreate()
-    )
-    spark.sparkContext.setLogLevel("WARN")
-    log.info("SparkSession created: master=%s", spark_master)
-    return spark
 
 
-def read_kafka_stream(spark: SparkSession) -> DataFrame:
-    """
-    Read raw JSON sensor readings from Kafka as a Spark Structured Streaming DataFrame.
+# =============================================================================
+# Stream Processing Functions
+# =============================================================================
 
-    The topic pattern 'sensor-readings' matches all tenant topic messages
-    (tenant_id is embedded in the message body, not the topic name).
-
-    Args:
-        spark: Active SparkSession.
-
-    Returns:
-        Streaming DataFrame with Kafka metadata columns + raw 'value' bytes.
-    """
-    bootstrap = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
-    topic = os.getenv("KAFKA_TOPIC_SENSOR_DATA", "sensor-readings")
-
-    return (
-        spark.readStream.format("kafka")
-        .option("kafka.bootstrap.servers", bootstrap)
-        .option("subscribe", topic)
-        .option("startingOffsets", "latest")
-        .option("failOnDataLoss", "false")
-        .option("maxOffsetsPerTrigger", 10000)  # backpressure cap
+def create_kafka_stream(spark: SparkSession, topic: str = KAFKA_TOPIC):
+    """Create Kafka stream source."""
+    return spark \
+        .readStream \
+        .format("kafka") \
+        .option("kafka.bootstrap.servers", KAFKA_BOOTSTRAP_SERVERS) \
+        .option("subscribe", topic) \
+        .option("startingOffsets", "latest") \
+        .option("failOnDataLoss", "false") \
         .load()
-    )
 
 
-def parse_sensor_readings(raw_df: DataFrame) -> tuple[DataFrame, DataFrame]:
-    """
-    Parse raw Kafka JSON bytes into typed sensor readings.
-    Splits into valid records and dead-letter records (malformed JSON).
+def parse_sensor_data(df):
+    """Parse JSON sensor data from Kafka."""
+    # Parse the JSON value
+    parsed = df.select(
+        from_json(col("value").cast("string"), sensor_reading_schema).alias("data"),
+        col("timestamp").alias("kafka_timestamp")
+    ).select("data.*")
+    
+    return parsed
 
-    Args:
-        raw_df: Kafka streaming DataFrame with binary 'value' column.
 
-    Returns:
-        Tuple of (valid_df, dead_letter_df).
-    """
-    # Decode binary Kafka value to string, parse JSON
-    parsed = raw_df.select(
-        F.col("offset"),
-        F.col("timestamp").alias("kafka_timestamp"),
-        F.col("partition"),
-        F.from_json(
-            F.col("value").cast("string"),
-            SENSOR_READING_SCHEMA,
-        ).alias("data"),
-    )
-
-    # Cast string timestamp to proper TimestampType
-    valid_df = (
-        parsed.filter(F.col("data").isNotNull())
-        .filter(F.col("data.tenant_id").isNotNull())
-        .filter(F.col("data.asset_id").isNotNull())
+def create_5min_aggregations(df):
+    """Create 5-minute windowed aggregations."""
+    return df \
+        .withWatermark("timestamp", "10 minutes") \
+        .groupBy(
+            window("timestamp", "5 minutes"),
+            "tenant_id",
+            "asset_id",
+            "sensor_type"
+        ) \
+        .agg(
+            count("*").alias("readings_count"),
+            avg("value").alias("avg_value"),
+            min("value").alias("min_value"),
+            max("value").alias("max_value"),
+            stddev("value").alias("std_dev")
+        ) \
         .select(
-            F.col("data.reading_id"),
-            F.col("data.tenant_id"),
-            F.col("data.asset_id"),
-            F.to_timestamp(F.col("data.timestamp")).alias("event_time"),
-            F.col("data.metric_name"),
-            F.col("data.value"),
-            F.col("data.unit"),
-            F.col("data.quality_flag"),
-            F.col("data.source"),
+            col("window.start").alias("window_start"),
+            col("window.end").alias("window_end"),
+            "tenant_id",
+            "asset_id",
+            "sensor_type",
+            "readings_count",
+            "avg_value",
+            "min_value",
+            "max_value",
+            "std_dev",
+            current_timestamp().alias("processed_at")
         )
-        .filter(F.col("event_time").isNotNull())
-        .filter(F.col("value").isNotNull())
-    )
-
-    # Dead-letter: records that failed parsing
-    dead_letter_df = parsed.filter(F.col("data").isNull()).select(
-        F.col("offset"),
-        F.col("kafka_timestamp"),
-        F.col("partition"),
-    )
-
-    return valid_df, dead_letter_df
 
 
-def write_dead_letters(dead_letter_df: DataFrame) -> None:
-    """
-    Write malformed records to MinIO dead-letter queue for inspection.
+def create_1hour_aggregations(df):
+    """Create 1-hour windowed aggregations."""
+    return df \
+        .withWatermark("timestamp", "2 hours") \
+        .groupBy(
+            window("timestamp", "1 hour"),
+            "tenant_id",
+            "asset_id",
+            "sensor_type"
+        ) \
+        .agg(
+            count("*").alias("readings_count"),
+            avg("value").alias("avg_value"),
+            min("value").alias("min_value"),
+            max("value").alias("max_value"),
+            stddev("value").alias("std_dev")
+        ) \
+        .select(
+            col("window.start").alias("window_start"),
+            col("window.end").alias("window_end"),
+            "tenant_id",
+            "asset_id",
+            "sensor_type",
+            "readings_count",
+            "avg_value",
+            "min_value",
+            "max_value",
+            "std_dev",
+            current_timestamp().alias("processed_at")
+        )
 
-    Args:
-        dead_letter_df: DataFrame of failed parse records.
-    """
-    (
-        dead_letter_df.writeStream.format("json")
-        .option("path", "s3a://foresight-raw/dead-letter/sensor-readings/")
-        .option("checkpointLocation", "/tmp/spark-checkpoints/dead-letter")
-        .outputMode("append")
-        .trigger(processingTime="60 seconds")
+
+def write_to_mongodb(df, collection: str, trigger_interval: str = "10 seconds"):
+    """Write DataFrame to MongoDB collection."""
+    return df \
+        .writeStream \
+        .format("mongodb") \
+        .option("database", MONGO_DB) \
+        .option("collection", collection) \
+        .outputMode("append") \
+        .option("checkpointLocation", f"{CHECKPOINT_LOCATION}/{collection}") \
+        .trigger(processingTime=trigger_interval) \
         .start()
-    )
-    log.info("Dead-letter stream writer started → s3a://foresight-raw/dead-letter/")
 
 
-def run_streaming_pipeline() -> None:
-    """
-    Build and start the complete FORESIGHT streaming pipeline.
+def write_raw_to_mongodb(df):
+    """Write raw sensor readings to MongoDB."""
+    return df \
+        .writeStream \
+        .format("mongodb") \
+        .option("database", MONGO_DB) \
+        .option("collection", "sensor_readings") \
+        .outputMode("append") \
+        .option("checkpointLocation", f"{CHECKPOINT_LOCATION}/raw_readings") \
+        .trigger(processingTime="5 seconds") \
+        .start()
 
-    Pipeline:
-        Kafka → parse → [valid] → aggregate → rule eval → alerts + MongoDB
-                      → [invalid] → dead-letter (MinIO)
-    """
-    configure_logging(
-        level=os.getenv("LOG_LEVEL", "INFO"),
-        fmt=os.getenv("LOG_FORMAT", "text"),
-        service_name="spark-streaming",
-    )
 
+# =============================================================================
+# Main Processing Pipeline
+# =============================================================================
+
+def run_streaming_pipeline():
+    """Run the main streaming pipeline."""
+    logger.info("Starting FORESIGHT streaming pipeline...")
+    logger.info(f"Kafka: {KAFKA_BOOTSTRAP_SERVERS}, Topic: {KAFKA_TOPIC}")
+    logger.info(f"MongoDB: {MONGO_URI}/{MONGO_DB}")
+    
+    # Create Spark session
     spark = create_spark_session()
-    rules_loader = RulesLoader()
-    alert_engine = AlertEngine(rules_loader=rules_loader)
-    mongo_sink = MongoDBSink()
+    spark.sparkContext.setLogLevel("WARN")
+    
+    try:
+        # Create Kafka stream
+        kafka_df = create_kafka_stream(spark)
+        
+        # Parse sensor data
+        sensor_df = parse_sensor_data(kafka_df)
+        
+        # Filter out bad quality readings
+        clean_df = sensor_df.filter(col("quality") != "bad")
+        
+        # Write raw readings to MongoDB
+        raw_query = write_raw_to_mongodb(clean_df)
+        logger.info("Raw readings stream started")
+        
+        # Create and write 5-minute aggregations
+        agg_5min_df = create_5min_aggregations(clean_df)
+        agg_5min_query = write_to_mongodb(agg_5min_df, "sensor_aggregations_5min", "1 minute")
+        logger.info("5-minute aggregations stream started")
+        
+        # Create and write 1-hour aggregations
+        agg_1h_df = create_1hour_aggregations(clean_df)
+        agg_1h_query = write_to_mongodb(agg_1h_df, "sensor_aggregations_1h", "5 minutes")
+        logger.info("1-hour aggregations stream started")
+        
+        # Wait for all streams
+        logger.info("Streaming pipeline is running. Press Ctrl+C to stop.")
+        spark.streams.awaitAnyTermination()
+        
+    except Exception as e:
+        logger.exception(f"Streaming error: {e}")
+        raise
+    finally:
+        spark.stop()
 
-    log.info("Reading from Kafka...")
-    raw_df = read_kafka_stream(spark)
-    valid_df, dead_letter_df = parse_sensor_readings(raw_df)
 
-    # Dead-letter sink
-    write_dead_letters(dead_letter_df)
+# =============================================================================
+# Alert Detection Stream
+# =============================================================================
 
-    # Windowed aggregations
-    agg_5min, agg_1hr, agg_24hr = apply_windowed_aggregations(valid_df)
+def run_alert_detection_stream():
+    """
+    Separate stream for real-time alert detection.
+    This monitors sensor values against thresholds and generates alerts.
+    """
+    logger.info("Starting alert detection stream...")
+    
+    spark = create_spark_session("ForesightAlertDetection")
+    
+    try:
+        # Read from Kafka
+        kafka_df = create_kafka_stream(spark)
+        sensor_df = parse_sensor_data(kafka_df)
+        
+        # Simple threshold detection (can be extended with rules from PostgreSQL)
+        # This is a basic example - in production, fetch rules from DB
+        alerts_df = sensor_df \
+            .filter(
+                ((col("sensor_type") == "temperature") & (col("value") > 90)) |
+                ((col("sensor_type") == "vibration") & (col("value") > 10))
+            ) \
+            .select(
+                col("tenant_id"),
+                col("asset_id"),
+                col("sensor_id"),
+                lit("threshold").alias("alert_type"),
+                when(col("value") > 100, lit("critical")).otherwise(lit("warning")).alias("severity"),
+                col("timestamp").alias("started_at"),
+                struct(
+                    col("sensor_type").alias("metric_name"),
+                    col("value").alias("metric_value")
+                ).alias("metadata")
+            )
+        
+        # Write alerts to MongoDB for processing
+        alert_query = alerts_df \
+            .writeStream \
+            .format("mongodb") \
+            .option("database", MONGO_DB) \
+            .option("collection", "detected_alerts") \
+            .outputMode("append") \
+            .option("checkpointLocation", f"{CHECKPOINT_LOCATION}/alerts") \
+            .trigger(processingTime="5 seconds") \
+            .start()
+        
+        logger.info("Alert detection stream started")
+        spark.streams.awaitAnyTermination()
+        
+    except Exception as e:
+        logger.exception(f"Alert detection error: {e}")
+        raise
+    finally:
+        spark.stop()
 
-    # Write 5-minute aggregations to MongoDB (primary time-series store)
-    mongo_query_5min = mongo_sink.write_stream(agg_5min, window_size="5min")  # noqa: F841
-    mongo_query_1hr = mongo_sink.write_stream(agg_1hr, window_size="1hour")  # noqa: F841
 
-    # Alert evaluation on 5-minute window (fastest detection)
-    alert_query = alert_engine.evaluate_stream(agg_5min)  # noqa: F841
-
-    log.info("All streaming queries started. Waiting for termination...")
-    spark.streams.awaitAnyTermination()
-
+# =============================================================================
+# Entry Point
+# =============================================================================
 
 if __name__ == "__main__":
-    run_streaming_pipeline()
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="FORESIGHT Streaming Pipeline")
+    parser.add_argument(
+        "--mode",
+        choices=["processing", "alerts", "both"],
+        default="processing",
+        help="Streaming mode to run"
+    )
+    
+    args = parser.parse_args()
+    
+    if args.mode == "processing":
+        run_streaming_pipeline()
+    elif args.mode == "alerts":
+        run_alert_detection_stream()
+    else:
+        # Run both in separate threads
+        from threading import Thread
+        
+        processing_thread = Thread(target=run_streaming_pipeline)
+        alert_thread = Thread(target=run_alert_detection_stream)
+        
+        processing_thread.start()
+        alert_thread.start()
+        
+        processing_thread.join()
+        alert_thread.join()

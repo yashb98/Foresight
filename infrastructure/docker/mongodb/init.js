@@ -1,77 +1,126 @@
 // =============================================================================
-// FORESIGHT — MongoDB Initialisation Script
-// Creates the foresight database, application user, and sensor_readings
-// collection with the correct compound index.
-// Runs once on first container start via docker-entrypoint-initdb.d/
+// FORESIGHT — MongoDB Initialization Script
+// Time-series sensor data and raw readings
 // =============================================================================
 
-// Switch to admin to create the app user
-db = db.getSiblingDB("admin");
+// Switch to foresight database
+db = db.getSiblingDB('foresight');
 
-// Create application user with readWrite on foresight DB
-db.createUser({
-  user: "foresight_user",
-  pwd: "change_me_mongo_password",   // overridden by MONGO_ROOT_PASSWORD in prod
-  roles: [
-    { role: "readWrite", db: "foresight" },
-    { role: "dbAdmin", db: "foresight" }
-  ]
-});
+// =============================================================================
+// SENSOR READINGS COLLECTION (Time-series)
+// =============================================================================
 
-// Switch to the foresight application database
-db = db.getSiblingDB("foresight");
+// Create time-series collection for sensor readings
+// This is optimized for high-volume insertions and time-based queries
+if (!db.getCollectionNames().includes('sensor_readings')) {
+    db.createCollection('sensor_readings', {
+        timeseries: {
+            timeField: 'timestamp',
+            metaField: 'metadata',
+            granularity: 'seconds'
+        },
+        expireAfterSeconds: 7776000  // 90 days TTL
+    });
+}
 
-// -------------------------------------------------------------------------
-// sensor_readings collection
-// Partition key:   (tenant_id, asset_id)
-// Clustering key:  timestamp DESC
-// Never query without tenant_id — will cause full collection scan at scale.
-// -------------------------------------------------------------------------
-db.createCollection("sensor_readings", {
-  validator: {
-    $jsonSchema: {
-      bsonType: "object",
-      required: ["tenant_id", "asset_id", "timestamp", "metric_name", "value"],
-      properties: {
-        tenant_id:   { bsonType: "string", description: "Tenant UUID — required" },
-        asset_id:    { bsonType: "string", description: "Asset UUID — required" },
-        timestamp:   { bsonType: "date",   description: "Reading timestamp — required" },
-        metric_name: { bsonType: "string", description: "temperature|vibration|pressure|rpm" },
-        value:       { bsonType: "double", description: "Raw sensor measurement" },
-        unit:        { bsonType: "string", description: "degC|mm_s|bar|rpm" },
-        quality_flag:{ bsonType: "string", description: "good|degraded|suspect" }
-      }
+// Create indexes for common query patterns
+db.sensor_readings.createIndex({ 'metadata.tenant_id': 1, 'metadata.asset_id': 1, 'timestamp': -1 });
+db.sensor_readings.createIndex({ 'metadata.tenant_id': 1, 'metadata.sensor_id': 1, 'timestamp': -1 });
+db.sensor_readings.createIndex({ 'metadata.tenant_id': 1, 'timestamp': -1 });
+db.sensor_readings.createIndex({ 'metadata.asset_id': 1, 'timestamp': -1 });
+
+// =============================================================================
+// AGGREGATED READINGS COLLECTION (5-min, 1-hour, 1-day windows)
+// =============================================================================
+
+// 5-minute aggregations
+db.createCollection('sensor_aggregations_5min');
+db.sensor_aggregations_5min.createIndex({ tenant_id: 1, asset_id: 1, window_start: -1 });
+db.sensor_aggregations_5min.createIndex({ tenant_id: 1, window_start: -1 });
+db.sensor_aggregations_5min.createIndex({ window_start: 1 }, { expireAfterSeconds: 2592000 }); // 30 days
+
+// 1-hour aggregations
+db.createCollection('sensor_aggregations_1h');
+db.sensor_aggregations_1h.createIndex({ tenant_id: 1, asset_id: 1, window_start: -1 });
+db.sensor_aggregations_1h.createIndex({ tenant_id: 1, window_start: -1 });
+db.sensor_aggregations_1h.createIndex({ window_start: 1 }, { expireAfterSeconds: 7776000 }); // 90 days
+
+// 1-day aggregations
+db.createCollection('sensor_aggregations_1d');
+db.sensor_aggregations_1d.createIndex({ tenant_id: 1, asset_id: 1, window_start: -1 });
+db.sensor_aggregations_1d.createIndex({ tenant_id: 1, window_start: -1 });
+// No TTL on daily aggregations - keep indefinitely
+
+// =============================================================================
+// STREAMING CHECKPOINTS (For Kafka/Spark exactly-once processing)
+// =============================================================================
+
+db.createCollection('streaming_checkpoints');
+db.streaming_checkpoints.createIndex({ checkpoint_id: 1 }, { unique: true });
+db.streaming_checkpoints.createIndex({ updated_at: 1 }, { expireAfterSeconds: 604800 }); // 7 days
+
+// =============================================================================
+// RAW INGESTED DATA (Landing zone for ETL)
+// =============================================================================
+
+db.createCollection('raw_ingested_data');
+db.raw_ingested_data.createIndex({ tenant_id: 1, source: 1, ingested_at: -1 });
+db.raw_ingested_data.createIndex({ ingested_at: 1 }, { expireAfterSeconds: 604800 }); // 7 days
+
+// =============================================================================
+-- SAMPLE DOCUMENT SCHEMAS (for reference)
+-- =============================================================================
+
+/*
+sensor_readings document:
+{
+    timestamp: ISODate("2024-01-15T10:30:00Z"),
+    metadata: {
+        tenant_id: "550e8400-e29b-41d4-a716-446655440000",
+        asset_id: "asset-001",
+        sensor_id: "sensor-temp-001",
+        sensor_type: "temperature"
+    },
+    value: 85.5,
+    unit: "celsius",
+    quality: "good",  // good, bad, uncertain
+    anomalies: {
+        is_anomaly: false,
+        score: 0.12
     }
-  },
-  validationAction: "warn"   // warn in dev; set to "error" in production
+}
+
+sensor_aggregations_5min document:
+{
+    tenant_id: "550e8400-e29b-41d4-a716-446655440000",
+    asset_id: "asset-001",
+    sensor_type: "temperature",
+    window_start: ISODate("2024-01-15T10:30:00Z"),
+    window_end: ISODate("2024-01-15T10:35:00Z"),
+    readings_count: 300,
+    avg_value: 85.2,
+    min_value: 82.1,
+    max_value: 88.5,
+    std_dev: 1.23,
+    alerts_triggered: 2
+}
+*/
+
+// =============================================================================
+// USER AND PERMISSIONS (if not using admin)
+// =============================================================================
+
+// Create foresight user with appropriate permissions (optional, for production)
+// Uncomment and modify as needed:
+/*
+db.createUser({
+    user: "foresight_app",
+    pwd: "secure_password_here",
+    roles: [
+        { role: "readWrite", db: "foresight" },
+        { role: "dbAdmin", db: "foresight" }
+    ]
 });
+*/
 
-// Primary compound index — most queries will hit this
-db.sensor_readings.createIndex(
-  { tenant_id: 1, asset_id: 1, timestamp: -1 },
-  { name: "idx_tenant_asset_timestamp", background: true }
-);
-
-// Secondary index for metric-based queries within a tenant
-db.sensor_readings.createIndex(
-  { tenant_id: 1, metric_name: 1, timestamp: -1 },
-  { name: "idx_tenant_metric_timestamp", background: true }
-);
-
-// TTL index — auto-delete raw readings older than 90 days (keeps collection lean)
-// Comment out if you need longer retention.
-db.sensor_readings.createIndex(
-  { timestamp: 1 },
-  { name: "idx_ttl_90days", expireAfterSeconds: 7776000, background: true }
-);
-
-// -------------------------------------------------------------------------
-// aggregated_readings collection — windowed aggregation results from Spark
-// -------------------------------------------------------------------------
-db.createCollection("aggregated_readings");
-db.aggregated_readings.createIndex(
-  { tenant_id: 1, asset_id: 1, window_start: -1, window_size: 1 },
-  { name: "idx_agg_tenant_asset_window", background: true }
-);
-
-print("MongoDB init complete: sensor_readings and aggregated_readings collections ready.");
+print('MongoDB initialization completed successfully');

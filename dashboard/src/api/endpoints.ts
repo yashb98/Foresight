@@ -228,3 +228,51 @@ export async function fetchImportJobs(sourceId: string): Promise<ImportJob[]> {
   const { data } = await apiClient.get<ImportJob[]>(`/data-sources/${sourceId}/imports`)
   return data
 }
+
+// -----------------------------------------------------------------------------
+// Data Import Pipeline
+// -----------------------------------------------------------------------------
+
+export async function runImportJob(jobId: string): Promise<{
+  success: boolean
+  job_id: string
+  records_imported?: number
+  records_failed?: number
+  error?: string
+}> {
+  const { data } = await apiClient.post(`/data-import/jobs/${jobId}/run`)
+  return data
+}
+
+export async function getImportJobStatus(jobId: string): Promise<{
+  job_id: string
+  status: string
+  records_imported: number
+  records_failed: number
+  error_message?: string
+  started_at?: string
+  completed_at?: string
+}> {
+  const { data } = await apiClient.get(`/data-import/jobs/${jobId}/status`)
+  return data
+}
+
+export async function cancelImportJob(jobId: string): Promise<{ success: boolean; message: string }> {
+  const { data } = await apiClient.post(`/data-import/jobs/${jobId}/cancel`)
+  return data
+}
+
+export async function getPipelineStatus(): Promise<{
+  job_counts: Record<string, number>
+  recent_jobs: Array<{
+    id: string
+    target_table: string
+    status: string
+    records_imported: number
+    created_at: string
+  }>
+  total_jobs: number
+}> {
+  const { data } = await apiClient.get('/data-import/pipeline/status')
+  return data
+}

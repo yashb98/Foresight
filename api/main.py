@@ -1,210 +1,219 @@
-"""
-FORESIGHT FastAPI Application — Entry Point
+# =============================================================================
+# FORESIGHT API — Main FastAPI Application
+# =============================================================================
 
-Wires up all routers, middleware, and startup/shutdown lifecycle hooks.
-Runs on uvicorn with async SQLAlchemy sessions and JWT-based tenant isolation.
-"""
-
-from __future__ import annotations
-
-import logging
-import os
-import time
+import asyncio
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
 
-from fastapi import FastAPI, HTTPException, Request, Response
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 
-from api.routers import alerts, assets, data_sources, predictions, reports, rules
+from api.routers import auth, assets, alerts, predictions, reports, realtime
+from api.dependencies import close_postgres_pool, close_mongo_client, get_postgres_pool
+from common.config import settings
+from common.logging_config import setup_logging, get_logger
 
-log = logging.getLogger("foresight.api")
+# Setup logging
+setup_logging()
+logger = get_logger(__name__)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Lifespan (startup / shutdown)
-# ─────────────────────────────────────────────────────────────────────────────
-
+# =============================================================================
+# Lifespan Event Handler
+# =============================================================================
 
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """
-    FastAPI lifespan context manager.
-    Runs startup logic before yield, teardown logic after.
-    """
-    log.info("FORESIGHT API starting up — environment=%s", os.getenv("ENVIRONMENT", "development"))
-
-    # Pre-warm the SQLAlchemy engine so first requests don't pay connection cost
+async def lifespan(app: FastAPI):
+    """Handle startup and shutdown events."""
+    # Startup
+    logger.info("Starting up FORESIGHT API...")
     try:
-        from api.dependencies import get_engine
-
-        engine = get_engine()
-        async with engine.begin() as conn:
-            await conn.run_sync(lambda c: None)
-        log.info("Database connection pool initialised.")
-    except Exception as exc:  # noqa: BLE001
-        log.warning("Could not pre-warm DB pool (non-fatal in dev): %s", exc)
-
-    # Pre-load the champion ML model into memory for fast inference
-    try:
-        from ml.serving.predictor import ModelPredictor as Predictor
-
-        app.state.predictor = Predictor()
-        log.info("Champion ML model loaded into app.state.predictor.")
-    except Exception as exc:  # noqa: BLE001
-        log.warning("ML model not loaded (non-fatal in dev): %s", exc)
-        app.state.predictor = None
-
+        # Initialize database pools
+        await get_postgres_pool()
+        logger.info("Database pool initialized")
+        
+        # Start Kafka-to-WebSocket streaming bridge
+        from api.routers.streaming_ws import start_streaming_bridge, stop_streaming_bridge
+        start_streaming_bridge()
+        logger.info("Streaming bridge started")
+    except Exception as e:
+        logger.error(f"Failed to initialize: {e}")
+        raise
+    
     yield
-
-    log.info("FORESIGHT API shutting down...")
+    
+    # Shutdown
+    logger.info("Shutting down FORESIGHT API...")
     try:
-        from api.dependencies import get_engine
-
-        engine = get_engine()
-        await engine.dispose()
-        log.info("Database connection pool disposed.")
-    except Exception:  # noqa: BLE001
+        from api.routers.streaming_ws import stop_streaming_bridge
+        stop_streaming_bridge()
+    except:
         pass
+    await close_postgres_pool()
+    await close_mongo_client()
+    logger.info("Cleanup completed")
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Application factory
-# ─────────────────────────────────────────────────────────────────────────────
+# =============================================================================
+# FastAPI Application
+# =============================================================================
 
 app = FastAPI(
-    title="FORESIGHT Predictive Asset Maintenance API",
-    description=(
-        "Multi-tenant SaaS API for predictive asset failure detection. "
-        "Provides real-time health scores, ML predictions, and alert management "
-        "for utilities, rail, oil & gas, and infrastructure operators."
-    ),
-    version="0.1.0",
+    title="FORESIGHT — Predictive Asset Maintenance API",
+    description="""
+    Multi-tenant SaaS platform for predictive maintenance and asset health monitoring.
+    
+    ## Features
+    
+    - **Asset Management**: Register and monitor industrial assets
+    - **Sensor Integration**: Real-time sensor data ingestion
+    - **Health Predictions**: ML-based failure prediction
+    - **Alerting**: Configurable threshold and anomaly alerts
+    - **Maintenance Tracking**: Work order and maintenance history
+    - **Reporting**: Comprehensive analytics and dashboards
+    
+    ## Authentication
+    
+    All endpoints require JWT authentication. Obtain a token via `/auth/token`.
+    """,
+    version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_url="/openapi.json",
     lifespan=lifespan,
 )
 
+# =============================================================================
+# Middleware
+# =============================================================================
 
-# ─────────────────────────────────────────────────────────────────────────────
-# CORS Middleware
-# ─────────────────────────────────────────────────────────────────────────────
-
-cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
+# CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[o.strip() for o in cors_origins],
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Request Timing + Tenant Logging Middleware
-# ─────────────────────────────────────────────────────────────────────────────
+# Gzip compression
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 
+# Request logging middleware
 @app.middleware("http")
-async def request_timing_middleware(request: Request, call_next) -> Response:
-    """
-    Adds X-Process-Time header to every response and emits structured access logs.
-    """
-    start = time.perf_counter()
-    response: Response = await call_next(request)
-    elapsed_ms = (time.perf_counter() - start) * 1_000
-    response.headers["X-Process-Time"] = f"{elapsed_ms:.2f}ms"
-    log.info(
-        "method=%s path=%s status=%d duration_ms=%.2f",
-        request.method,
-        request.url.path,
-        response.status_code,
-        elapsed_ms,
+async def log_requests(request: Request, call_next):
+    """Log all incoming requests."""
+    import time
+    
+    start_time = time.time()
+    response = await call_next(request)
+    duration = time.time() - start_time
+    
+    logger.info(
+        f"{request.method} {request.url.path} - {response.status_code} - {duration:.3f}s"
     )
+    
     return response
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Global Exception Handlers
-# ─────────────────────────────────────────────────────────────────────────────
-
+# =============================================================================
+# Exception Handlers
+# =============================================================================
 
 @app.exception_handler(Exception)
-async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    # Let FastAPI handle HTTPExceptions normally (401, 403, 404, 422, etc.)
-    if isinstance(exc, HTTPException):
-        return JSONResponse(
-            status_code=exc.status_code,
-            content={"detail": exc.detail},
-            headers=getattr(exc, "headers", None) or {},
-        )
-    log.exception("Unhandled exception on %s %s", request.method, request.url.path)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Handle unhandled exceptions."""
+    logger.exception(f"Unhandled exception: {exc}")
     return JSONResponse(
-        status_code=500,
-        content={"detail": "An unexpected internal error occurred. Please try again."},
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"detail": "Internal server error"}
     )
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# =============================================================================
 # Routers
-# ─────────────────────────────────────────────────────────────────────────────
+# =============================================================================
+
+app.include_router(auth.router)
+app.include_router(assets.router)
+app.include_router(alerts.router)
+app.include_router(predictions.router)
+app.include_router(reports.router)
+app.include_router(realtime.router)
+
+# Serve static files (for real-time test dashboard)
+app.mount("/static", StaticFiles(directory="dashboard/public"), name="static")
 
 
-app.include_router(assets.router, prefix="/assets", tags=["Assets"])
-app.include_router(alerts.router, prefix="/alerts", tags=["Alerts"])
-app.include_router(predictions.router, prefix="/predict", tags=["Predictions"])
-app.include_router(rules.router, prefix="/rules", tags=["Alert Rules"])
-app.include_router(reports.router, prefix="/reports", tags=["Reports"])
-app.include_router(data_sources.router, prefix="/data-sources", tags=["Data Sources"])
+# =============================================================================
+# Health Check Endpoints
+# =============================================================================
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# System Endpoints
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-@app.get("/health", tags=["System"], summary="System health check")
-async def health_check() -> dict:
-    """
-    Returns overall API health status including downstream connectivity checks.
-    """
-    checks: dict[str, str] = {}
-
-    # PostgreSQL
-    try:
-        from api.dependencies import get_engine
-        from sqlalchemy import text
-
-        engine = get_engine()
-        async with engine.begin() as conn:
-            await conn.execute(text("SELECT 1"))
-        checks["postgres"] = "ok"
-    except Exception as exc:  # noqa: BLE001
-        checks["postgres"] = f"error: {exc}"
-
-    # MongoDB
-    try:
-        import motor.motor_asyncio as motor
-
-        mongo_url = os.getenv("MONGO_URL", "mongodb://localhost:27017")
-        client = motor.AsyncIOMotorClient(mongo_url, serverSelectionTimeoutMS=2000)
-        await client.admin.command("ping")
-        checks["mongodb"] = "ok"
-    except Exception as exc:  # noqa: BLE001
-        checks["mongodb"] = f"error: {exc}"
-
-    overall = "healthy" if all(v == "ok" for v in checks.values()) else "degraded"
+@app.get("/health", tags=["Health"])
+async def health_check():
+    """Basic health check endpoint."""
     return {
-        "status": overall,
-        "service": "foresight-api",
-        "version": "0.1.0",
-        "environment": os.getenv("ENVIRONMENT", "development"),
-        "checks": checks,
+        "status": "healthy",
+        "version": "1.0.0",
+        "timestamp": asyncio.get_event_loop().time()
     }
 
 
-@app.get("/", tags=["System"], include_in_schema=False)
-async def root() -> dict:
-    return {"service": "FORESIGHT Predictive Asset Maintenance API", "docs": "/docs"}
+@app.get("/health/ready", tags=["Health"])
+async def readiness_check():
+    """Readiness probe for Kubernetes."""
+    try:
+        # Check database connectivity
+        pool = await get_postgres_pool()
+        async with pool.acquire() as conn:
+            await conn.fetchval("SELECT 1")
+        
+        return {"status": "ready"}
+    except Exception as e:
+        logger.error(f"Readiness check failed: {e}")
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"status": "not_ready", "error": str(e)}
+        )
+
+
+@app.get("/health/live", tags=["Health"])
+async def liveness_check():
+    """Liveness probe for Kubernetes."""
+    return {"status": "alive"}
+
+
+# =============================================================================
+# Root Endpoint
+# =============================================================================
+
+@app.get("/", tags=["Root"])
+async def root():
+    """API root with basic information."""
+    return {
+        "name": "FORESIGHT API",
+        "version": "1.0.0",
+        "description": "Predictive Asset Maintenance Platform",
+        "documentation": "/docs",
+        "health": "/health"
+    }
+
+
+# =============================================================================
+# Main Entry Point
+# =============================================================================
+
+if __name__ == "__main__":
+    import uvicorn
+    
+    uvicorn.run(
+        "api.main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=settings.DEBUG,
+        log_level="info"
+    )
